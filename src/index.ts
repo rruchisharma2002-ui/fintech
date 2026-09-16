@@ -1,9 +1,7 @@
-import { createApp } from "./app.ts";
+import { createApp } from "./app.js";
 
 const app = createApp();
 const port = 3000;
-app.listen(port,()=>{
+app.listen(port,async ()=>{
     console.log(`Server is running on port ${port}`);
 });
-//get application
-//start server

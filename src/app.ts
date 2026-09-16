@@ -6,12 +6,8 @@ export function createApp(){
     app.use(express.json());
 
     app.get("/",(req,res)=>{
-        res.json("apis are working locally")
+        res.json("eddie guerrero")
     })
     app.use("/api/v1/user",userRouter);
     return app;
 }
-// it 
- //yescreate application 
- //Add routes return application
- //return application
