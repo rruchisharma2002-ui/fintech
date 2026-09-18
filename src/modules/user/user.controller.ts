@@ -16,3 +16,4 @@ export async function login(req: Request, res: Response) {
   }
   res.json(user);
 }
+//req /res handles the request and response

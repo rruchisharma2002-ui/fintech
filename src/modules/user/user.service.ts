@@ -24,3 +24,5 @@ export async function loginUser(
   }
   return user;
 }
+
+//Password hash / compare, business rules

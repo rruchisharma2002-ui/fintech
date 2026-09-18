@@ -6,8 +6,9 @@ export function createApp(){
     app.use(express.json());
 
     app.get("/",(req,res)=>{
-        res.json("eddie guerrero")
+        res.json("welcome to the fincore api")
     })
     app.use("/api/v1/user",userRouter);
     return app;
 }
+//Express setup + routes attach

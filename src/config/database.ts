@@ -6,3 +6,5 @@ export const pool = new Pool({
     password: "aarav",
     port: 5432,
 });
+
+//postgres database connection

@@ -42,3 +42,4 @@ export async function findUserByEmail(
     }
     return result.rows[0] || null;
 }
+//Database SQL

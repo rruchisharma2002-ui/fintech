@@ -6,3 +6,4 @@ export type User = {
     createdAt: Date;
     updatedAt: Date;
 }
+//User object ka shape
