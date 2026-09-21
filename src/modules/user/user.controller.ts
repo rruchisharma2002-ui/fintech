@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { registerUser, loginUser } from "./user.service.js";
+import { registerUser, loginUser,getCurrentUser } from "./user.service.js";
 
 export async function register(req: Request, res: Response) {
   const { name, email, password } = req.body;
@@ -12,6 +12,21 @@ export async function login(req: Request, res: Response) {
   const user = await loginUser(email, password);
   if (!user) {
     res.status(401).json({ message: "Invalid email or password" });
+    return;
+  }
+  res.json(user);
+}
+export async function getMe(req: Request, res: Response) {
+  const userId = req.user?.userId;
+  if (!req.user || !userId) {
+    res.status(401).json({ 
+      message: "User not authenticated",
+     });
+    return;
+  }
+  const user = await getCurrentUser(userId);
+if (!user) {
+    res.status(404).json({ message: "User not found" });
     return;
   }
   res.json(user);

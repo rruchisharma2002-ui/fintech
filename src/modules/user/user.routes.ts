@@ -1,7 +1,18 @@
 import { Router } from "express";
-import { login, register } from "./user.controller.js";
+import { login, register,getMe } from "./user.controller.js";
+import { authenticate } from "./user.middleware.js";
+import{registerSchema,loginSchema} from "./user.validation.js";
+import { validateBody } from "./user.validation.middleware.js";
 const userRouter = Router();
-userRouter.post("/register",register);
-userRouter.post("/login",login); //route on which our request will be sent to login the user
+userRouter.post("/register", validateBody(registerSchema), register);
+userRouter.post("/login", validateBody(loginSchema), login);
+userRouter.get("/me", authenticate, getMe);
+userRouter.get("/protected", authenticate, (req, res) => {
+    res.json({ message: "You have accessed a protected route!" ,
+        userId: req.user?.userId // Access the userId from the authenticated user
+    });
+});
 export default userRouter;
 //Kaunsa URL kis function pe jaaye
+
+  

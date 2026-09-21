@@ -6,4 +6,15 @@ export type User = {
     createdAt: Date;
     updatedAt: Date;
 }
+export type PublicUser ={
+    id:string;
+    name:string;
+     email:string;
+
+};
+export type LoginResponse = {
+    accessToken:string;
+    user:PublicUser;
+}
+//Password hash / compare, business rules
 //User object ka shape

@@ -331,3 +331,15 @@ Isliye:
 
 /register actually /api/v1/user/register
 /login actually /api/v1/user/login
+
+
+
+--------
+npm install -D @types/jsonwebtoken  
+
+yha -D why?
+
+-D, d for dependencies
+
+ye package module sirf development ke time kam aate h, jab tk hum kam krteh, jab live ho jaate h tab wha inki need ni hoti, na hi wha ye install hoti, they are only for development.
+-------
