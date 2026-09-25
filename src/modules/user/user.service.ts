@@ -1,16 +1,32 @@
 import { createUser, findUserByEmail, findUserById } from "./user.repositry.js";
 import { LoginResponse, User,PublicUser } from "./user.types.js";
 import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
-import { env } from "../../config/env.js";
+import { AppError } from "../../shared/errors/app.error.js";
+import { createAccessToken } from "../../shared/auth/jwt.js";
 export async function registerUser(
   name: string,
   email: string,
   password: string,
 ): Promise<User> {
   const hashedPassword = await bcrypt.hash(password, 12);
-  const user = await createUser(name, email, hashedPassword);
-  return user;
+  try {
+    const user = await createUser(name, email, hashedPassword);
+    return user;
+  }
+  catch (error: unknown) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "23505"
+    ) {
+      throw new AppError(
+        409,
+        "Email is already registered"
+      );
+    }
+    throw error;
+}
 }
 export async function loginUser(
   email: string,
@@ -24,9 +40,9 @@ export async function loginUser(
   if (!passwordMatches) {
     return null;
   }
-  const accessToken = jwt.sign({ userId: user.id }, env.jwt.secret, {
-    expiresIn: "1h",
-  });
+ const accessToken = createAccessToken({
+  userId: user.id,
+});
   return {
     user: {
       id: user.id,

@@ -31,4 +31,17 @@ if (!user) {
   }
   res.json(user);
 }
-//req /res handles the request and response
+/*
+Postman: GET /api/v1/user/me
+         Header: Bearer eyJ...
+
+1. ROUTE          /me → pehle authenticate, phir getMe
+2. authenticate   token sahi? haan
+                  req.user = { userId: "abc-123" }
+                  next()
+3. getMe          req.user.userId nikala
+                  getCurrentUser("abc-123") call
+4. getCurrentUser findUserById("abc-123")
+5. repository     SELECT id, name, email FROM users WHERE id = $1
+6. Postgres       row deti hai
+7. getMe          res.json({ id, name, email })*/ 
