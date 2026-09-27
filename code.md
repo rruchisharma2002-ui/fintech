@@ -1057,11 +1057,14 @@ hashRefreshToken(token)  // sha256 → hex
 Service (`refresh-token.service.ts`) login pe yeh karti hai:
 
 ```
-issueRefreshToken(userId)
+issueRefreshToken(userId, tokenFamilyId?)
    ├── generate refresh token     ← asal secret, client ko yahi milega
    ├── hash it                    ← DB mein hash, raw nahi
+   ├── family id
+   │     login pe naya UUID       ← crypto.randomUUID(), nayi family
+   │     refresh pe wahi family   ← jo stored token pe padi hai
    ├── expiry = ab + 7 din
-   └── repository se hash save
+   └── repository se hash + family save
    return raw token               ← user / client ko
 ```
 
@@ -1077,15 +1080,16 @@ const refreshToken = await issueRefreshToken(user.id);
 Repository insert (`refresh-token.repository.ts`):
 
 ```sql
-INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-VALUES ($1, $2, $3)
+INSERT INTO refresh_tokens (user_id, token_hash, token_family_id, expires_at)
+VALUES ($1, $2, $3, $4)
 ```
 
-Table `migrations/002_create_refresh_tokens.sql`:
+Table `migrations/002_create_refresh_tokens.sql`, aur family column `migrations/003_add_token_family_id.sql`:
 
 - `id` — UUID
 - `user_id` — `users.id` pe foreign key. User delete → yeh rows bhi delete (`ON DELETE CASCADE`)
 - `token_hash` — UNIQUE. Same hash do baar nahi
+- `token_family_id` — UUID. Login se lekar uske baad ke saare rotated refresh tokens ek family mein. NOT NULL
 - `expires_at` — kab natural expire
 - `revoked_at` — null matlab abhi valid. Time set = pehle hi band kar diya
 - `created_at`
@@ -1135,23 +1139,24 @@ CLIENT
   findRefreshTokenByHash
         ↓
   teen check:
-    1. row nahi  → null
-    2. revokedAt set hai  → null
-    3. expiresAt guzar chuka  → null
+    1. row nahi             → null
+    2. revokedAt set hai    → REUSE. poori family revoke, phir throw RefreshTokenReuseError
+    3. expiresAt guzar chuka → null
         ↓
   null aaya → controller 401 "Invalid or expired refresh token"
+  RefreshTokenReuseError → controller 401 "Refresh token reuse detected"
         ↓
   theek hai toh:
     1. purana token revoke   (revoked_at = NOW())
     2. naya access token     (jwt, 1h, usi userId pe)
-    3. naya refresh token    (issueRefreshToken — naya raw + naya hash)
+    3. naya refresh token    (issueRefreshToken — naya raw + naya hash, SAME family id)
         ↓
   200 { accessToken, refreshToken }
 ```
 
 Matlab: client refresh bhejta hai. Server dekhta hai token **valid** hai, **revoke** nahi hua, **expire** nahi hua. Phir naya access **aur** naya refresh deta hai.
 
-Purana refresh is step pe revoke ho jata hai. Woh dubara use nahi ho sakta. Isse kehte hain **rotation**: har refresh pe naya refresh, purana band.
+Purana refresh is step pe revoke ho jata hai. Woh dubara use nahi ho sakta. Isse kehte hain **rotation**: har refresh pe naya refresh, purana band. Naya refresh **usi token family** mein jaata hai. Detail neeche, section 32–34.
 
 `RefreshResponse`:
 
@@ -1197,6 +1202,214 @@ Matlab: yeh refresh token dhoondo, aur agar pehle se revoke nahi hai, **ab** rev
 
 Logout controller woh `true/false` **nahi** dekhta. Token mila ya nahi, response **204** hi jaata hai.
 
-Revoke ke baad wahi refresh `POST /refresh` pe **401** dega, kyunki `revokedAt` set hai.
+Revoke ke baad wahi refresh `POST /refresh` pe **401** dega. Ab message sirf "invalid" nahi. Kyunki `revokedAt` pehle se set hai, yeh **reuse** maana jaata hai: poori family revoke, aur message `"Refresh token reuse detected"`. Detail section 33.
 
 Access token alag hai. Logout us JWT ko DB se nahi mitaata. Woh 1 ghante tak header mein chal sakta hai, jab tak expire na ho. Naya access lene ke liye refresh chahiye, aur woh revoke ho chuka hai.
+
+---
+
+## 32. Rotation — refresh token bhi access ke saath badalta hai
+
+User login karta hai. Uske paas do cheezein aati hain:
+
+- **access token** — 1 ghanta
+- **refresh token** — 7 din. DB mein iska hash, aur ek **nayi** `token_family_id`
+
+Access expire ho gaya. User `POST /refresh` pe purana refresh bhejta hai.
+
+Server:
+
+1. hash karke row dhoondhta hai
+2. row hai, `revoked_at` null hai, expire nahi hua
+3. **purana refresh revoke** (`revoked_at = NOW()`)
+4. **naya access** banata hai
+5. **naya refresh** banata hai, **usi family id** ke saath
+
+Client ke paas ab dono naye hain. Purana refresh band hai.
+
+Yahi **rotation** hai: sirf access nahi badalta. Har successful refresh pe **refresh token bhi naya** milta hai, aur purana revoke ho jata hai.
+
+```
+login
+  access A1 + refresh R1     family = F1
+        ↓  A1 expire
+POST /refresh  body: R1
+  R1 revoke
+  access A2 + refresh R2     family = F1   (wahi family)
+        ↓  A2 expire
+POST /refresh  body: R2
+  R2 revoke
+  access A3 + refresh R3     family = F1
+```
+
+`issueRefreshToken` doosra argument optional hai:
+
+```ts
+const familyId = tokenFamilyId ?? crypto.randomUUID();
+```
+
+- login `issueRefreshToken(user.id)` — family nahi bhejta → naya UUID, nayi family
+- refresh `issueRefreshToken(userId, storedToken.tokenFamilyId)` — wahi family aage badhti hai
+
+---
+
+## 33. Detection — revoke ho chuka token dubara aaya
+
+Rotation ke baad purane refresh ka koi valid use nahi. Woh revoke ho chuka hai.
+
+Phir bhi koi (hacker, ya doosra device jiske paas copy reh gayi) **wahi purana** refresh `POST /refresh` pe bhej deta hai.
+
+Server row dhoondh leta hai. `revokedAt` set hai. Matlab yeh token pehle hi use ho chuka / band ho chuka. Koi **dubara** use kar raha hai.
+
+Yahi **detection** hai. Hum sirf "invalid" nahi kehte. Alag message bhejte hain, taaki pata chale: yeh token revoke ho chuka tha, aur kisi ne use phir chalane ki koshish ki.
+
+Controller:
+
+```ts
+try {
+  const result = await refreshAccessToken(refreshToken);
+  if (!result) {
+    return res.status(401).json({
+      message: "Invalid or expired refresh token",
+    });
+  }
+  return res.status(200).json(result);
+} catch (error) {
+  if (error instanceof RefreshTokenReuseError) {
+    return res.status(401).json({
+      message: "Refresh token reuse detected",
+    });
+  }
+  throw error;
+}
+```
+
+Do alag 401:
+
+| Case | Service kya karti hai | Message |
+|---|---|---|
+| token DB mein nahi, ya expire | `return null` | `"Invalid or expired refresh token"` |
+| token mila, par `revokedAt` set hai | family revoke + `throw new RefreshTokenReuseError()` | `"Refresh token reuse detected"` |
+
+Service ka woh hissa:
+
+```ts
+if (storedToken.revokedAt) {
+  await revokeRefreshTokenFamily(storedToken.tokenFamilyId);
+  throw new RefreshTokenReuseError();
+}
+```
+
+`return null` aur `throw` ka farq: null matlab "yeh token kaam ka nahi". Throw matlab "yeh token pehle band ho chuka tha, aur phir bhi aaya" — alag case, alag message.
+
+---
+
+## 34. Token family tree — poori chain revoke
+
+Detection sirf message nahi hai. Hum yeh bhi maante hain: jisne purana refresh nikaal liya, uske paas **naya** bhi ho sakta hai.
+
+Isliye sirf us ek purane token ko chhodna kaafi nahi. Woh pehle se revoke hai. Hum **usi family ke saare** refresh tokens revoke kar dete hain — jo abhi valid naya token user ke paas hai, woh bhi.
+
+User ko dubara **login** karna padega. Naya login = nayi family.
+
+```
+family F1
+  R1  revoked     ← rotation pe band
+  R2  revoked     ← rotation pe band
+  R3  active      ← user ke paas yeh hai
+
+koi R1 dubara bhejta hai
+        ↓
+revokeRefreshTokenFamily(F1)
+  R1, R2, R3  sab revoked_at = NOW()
+        ↓
+401  "Refresh token reuse detected"
+
+user ka R3 bhi ab bekaar
+naya access lene ke liye login
+login → nayi family F2, naya R4
+```
+
+Repository:
+
+```sql
+UPDATE refresh_tokens
+SET revoked_at = NOW()
+WHERE token_family_id = $1
+  AND revoked_at IS NULL
+```
+
+Ek family = ek login se shuru hui refresh chain. R1 → R2 → R3 same `token_family_id`. Doosra login doosri family.
+
+Short:
+
+1. **rotation** — har refresh pe naya access + naya refresh, purana refresh revoke
+2. **detection** — revoke ho chuka refresh dubara aaya → alag message
+3. **family revoke** — us chain ke saare tokens band, user login kare
+
+---
+
+## 35. Error class — constructor, `extends`, aur `instanceof`
+
+File: `src/shared/errors/auth.errors.ts`
+
+```ts
+export class RefreshTokenReuseError extends Error {
+  constructor() {
+    super("Refresh token reuse detected");
+    this.name = "RefreshTokenReuseError";
+  }
+}
+```
+
+**Class** ek type hai. `new RefreshTokenReuseError()` us type ka ek object banata hai.
+
+**Constructor** woh function hai jo `new` pe chalta hai. Yahan koi argument nahi. Message andar fix hai.
+
+**`extends Error`** matlab yeh class JavaScript ke built-in `Error` ki child hai. Jo `Error` kar sakta hai (message, stack), yeh bhi kar sakti hai. Extra yeh hai ki hum isko **pehchaan** sakte hain.
+
+**`super(...)`** parent ka constructor chalaata hai. `Error` ka constructor message set karta hai. Bina `super` ke child class ban hi nahi sakti jab parent ka constructor chahiye. Yahan `super("Refresh token reuse detected")` se `error.message` wahi string ho jaati hai.
+
+**`this.name`** default `"Error"` hota. Hum `"RefreshTokenReuseError"` likhte hain taaki logs mein pata chale kaunsi class thi.
+
+**Kyun alag class, kyun `throw`?**
+
+Agar hum `return null` karte, controller ko pata nahi chalta: token galat hai, ya revoke ho chuka token dubara aaya. Dono pe same 401 chala jaata.
+
+Custom error se controller `instanceof` se pehchaan leta hai:
+
+```ts
+if (error instanceof RefreshTokenReuseError) {
+  return res.status(401).json({
+    message: "Refresh token reuse detected",
+  });
+}
+```
+
+`instanceof` true tabhi jab object us class ka ho (ya uski child). Isliye extend karte hain: yeh ek `Error` bhi hai, aur specifically `RefreshTokenReuseError` bhi.
+
+Agar yeh error nahi hai, `throw error` se woh aage chala jaata hai. `app.ts` mein last mein `errorMiddleware` hai. Jo error controller ne pakda nahi, wahan jaata hai.
+
+Doosri error class, `src/shared/errors/app.error.ts`:
+
+```ts
+export class AppError extends Error {
+  constructor(
+    public statusCode: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AppError";
+  }
+}
+```
+
+Yahan constructor **do cheezein** leta hai: HTTP status aur message. `public statusCode` TypeScript ka shortcut hai — argument class ki property ban jaati hai. `super(message)` parent `Error` ko message deta hai.
+
+Example: email pehle se registered → `throw new AppError(409, "Email is already registered")`.
+
+`errorMiddleware` dekhta hai `error instanceof AppError`. Haan, toh `error.statusCode` aur `error.message` client ko. Nahi, toh 500 `"Internal server error"`.
+
+`RefreshTokenReuseError` abhi `AppError` extend nahi karti. Controller khud `try/catch` mein pakad ke 401 bhejta hai. `AppError` wala raasta middleware se status bhejta hai, kyunki status har baar alag ho sakta hai (409, aur aage jo bhi).
+
+Dono ka idea same hai: **class extend karo, constructor mein `super` se message do, `instanceof` se alag case alag handle karo.**
