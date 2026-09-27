@@ -30,7 +30,6 @@ export function authenticate(
     };
 
     req.user = authUser;
-
     next();
   } catch (error) {
     return res.status(401).json({

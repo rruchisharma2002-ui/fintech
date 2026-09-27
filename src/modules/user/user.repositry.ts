@@ -40,7 +40,7 @@ export async function findUserByEmail(
     if (result.rows.length === 0) {
         return null;
     }
-    return result.rows[0] || null;
+    return result.rows[0];
 }
 
 
@@ -59,6 +59,6 @@ export async function findUserById(
     if (result.rows.length === 0) {
         return null;
     }
-    return result.rows[0] || null;
+    return result.rows[0];
 }   
 //Database SQL

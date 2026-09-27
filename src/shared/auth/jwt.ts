@@ -2,10 +2,11 @@ import jwt from "jsonwebtoken"
 import {env} from  "../../config/env.js"
 import { AccessTokenPayload } from "./jwt.types.js"
 
-
+//createAccessToken - create a new access token we define here the payload and the secret and the expiresIn
 export function createAccessToken(
     payload:AccessTokenPayload
 ):string{
+  //payload token ke data ko store karna hai
     return jwt.sign(
         payload,
         env.jwt.secret,{
@@ -13,11 +14,13 @@ export function createAccessToken(
         }
     )
 }
-
-
+//verifyAccessToken - verify the access token we define here the token and the secret
+//if the token is valid, we return the payload
+//token aya ,usse verify karna hai ,uske baad payload return karna hai
 export function verifyAccessToken(
   token: string
 ): AccessTokenPayload {
+  //token aya ,usse verify karna hai ,uske baad payload return karna hai
   const decoded = jwt.verify(
     token,
     env.jwt.secret

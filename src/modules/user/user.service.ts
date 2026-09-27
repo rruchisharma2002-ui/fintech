@@ -3,14 +3,17 @@ import { LoginResponse, User,PublicUser } from "./user.types.js";
 import bcrypt from "bcrypt";
 import { AppError } from "../../shared/errors/app.error.js";
 import { createAccessToken } from "../../shared/auth/jwt.js";
+import { issueRefreshToken } from "./refresh-token.service.js";
+
 export async function registerUser(
   name: string,
   email: string,
-  password: string,
+  password: string,//input from controller
 ): Promise<User> {
   const hashedPassword = await bcrypt.hash(password, 12);
   try {
     const user = await createUser(name, email, hashedPassword);
+    //createUser hoga repositry mai 
     return user;
   }
   catch (error: unknown) {
@@ -33,16 +36,23 @@ export async function loginUser(
   password: string,
 ): Promise<LoginResponse | null> {
   const user = await findUserByEmail(email);
+  //findUserByEmail  in repositry
   if (!user) {
     return null;
   }
-  const passwordMatches = await bcrypt.compare(password, user.password);
+  const passwordMatches = await bcrypt.compare(
+    password, user.password
+  );
   if (!passwordMatches) {
     return null;
   }
  const accessToken = createAccessToken({
   userId: user.id,
 });
+const refreshToken = await issueRefreshToken(user.id);
+//we use await here  because db  kke andr or function call hai aur usko wait karna hai.
+//if we don't use await, the function will return before the refresh token is issued.
+ 
   return {
     user: {
       id: user.id,
@@ -50,6 +60,7 @@ export async function loginUser(
       email: user.email,
     },
     accessToken,
+    refreshToken,
   };
 }
 //Password hash / compare, business rules

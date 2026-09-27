@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { login, register,getMe } from "./user.controller.js";
+import { login, register,getMe,refresh,logout } from "./user.controller.js";
 import { authenticate } from "./user.middleware.js";
 import{registerSchema,loginSchema} from "./user.validation.js";
 import { validateBody } from "./user.validation.middleware.js";
@@ -12,6 +12,8 @@ userRouter.get("/protected", authenticate, (req, res) => {
         userId: req.user?.userId // Access the userId from the authenticated user
     });
 });
+userRouter.post("/refresh", refresh);
+userRouter.post("/logout", logout);
 export default userRouter;
 //Kaunsa URL kis function pe jaaye
 

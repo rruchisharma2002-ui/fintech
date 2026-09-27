@@ -15,6 +15,7 @@ export type PublicUser ={
 export type LoginResponse = {
     accessToken:string;
     user:PublicUser;
+    refreshToken:string;
 }
 //Password hash / compare, business rules
 //User object ka shape
