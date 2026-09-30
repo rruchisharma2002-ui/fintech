@@ -1,0 +1,4 @@
+-- Up Migration
+
+ALTER TABLE accounts
+ADD COLUMN balance NUMERIC(20,2) NOT NULL DEFAULT 0;

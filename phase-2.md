@@ -317,3 +317,38 @@ Is repo mein asal mein teen style hain: **declaration** (controller, service, re
 3. **Status change nahi.** Sab `ACTIVE` bante hain. Suspend / close ka route nahi.
 4. **Galat `accountId` pe 400 nahi.** UUID na ho to Postgres 500 deta hai.
 5. **Service abhi rule nahi lagati.** Woh repository ko forward karti hai. Limit (ek user ke kitne SAVINGS) baad mein yahin aayegi, controller mein nahi.
+
+---Transaction: Records what business event happened — e.g., Ruchi sent ₹1 to you.
+---Ledger: Records the financial effect of that event — Ruchi DEBIT ₹1, you CREDIT ₹1.
+---PostgreSQL transaction, ye ik postgres ka concept h, as like in mongo, mongodb aggreation pipeline.
+---aapko agar kahi bhi atomic ya atomicity dikhe tho iska mtlb hota h
+single unit, ya tho complete hoga ya hoga hi nhi
+suppose money distribute krni 10 people me, 4 me hogyi 5th me error aagya, so, behavior aaisa krnah hi ya tho sabhi ki successfull ho ya 1 ki bhi nhi, so 5th p error aane p, phle 4 bhi revert back ho jaieyege
+ya tho sabhi ya kuch bhi nhi, treat all as a single unit
+so it includes commit rollback if  money distribute to 10 then commit if failed in between then rollback and it will handle in database.ts
+
+
+repositories should use the same PostgreSQL client when they are part of a transaction.
+
+Right now your repository does this:
+
+pool.query(...)
+
+But our withTransaction() gives us:
+
+client
+We need the repository to accept that client.
+
+const db =client?? pool;==>
+If client is provided
+        ↓
+use client.query()
+        ↓
+part of PostgreSQL transaction
+Otherwise:
+
+No client
+   ↓
+use pool.query()
+   ↓
+normal standalone query
