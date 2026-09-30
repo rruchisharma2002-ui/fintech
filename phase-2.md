@@ -352,3 +352,70 @@ No client
 use pool.query()
    ↓
 normal standalone query
+
+## Ledger
+Records the financial effect of that event — Ruchi DEBIT ₹1, you CREDIT ₹1.
+
+## PostgreSQL transaction
+Ye ek Postgres ka concept hai, jaise MongoDB mein aggregation pipeline.
+
+
+
+## Atomicity
+Agar kahin **atomic** ya **atomicity** dikhe, iska matlab hai **single unit**: ya to complete hoga, ya hoga hi nahi.
+
+Suppose money distribute karni hai 10 people mein. 4 mein ho gayi, 5th mein error aa gaya. Behavior aisa hona chahiye: ya to sabhi successful hon, ya ek ki bhi nahi. 5th pe error aane pe pehli 4 bhi revert back ho jayengi.
+Ya to sabhi, ya kuch bhi nahi. Treat all as a single unit.
+Isme **commit** aur **rollback** aata hai. 10 ko money distribute ho gayi to commit. Beech mein fail hua to rollback. Yeh `database.ts` mein handle hoga.
+
+
+
+## Repository aur same client
+
+
+
+Repositories should use the same PostgreSQL client when they are part of a transaction.
+
+
+
+Right now the repository does this:
+
+
+
+```ts
+
+
+
+pool.query(...)
+
+
+
+```
+
+
+
+## Aaj kya kiya
+
+
+
+- `transactions` table (migration 006) aur `ledger_entries` table (migration 007).
+
+
+
+- `accounts` pe `balance` column, default `0` (migration 008). `npm run migrate -- up` chal chuka hai.
+
+
+
+- Transaction module: types, `createTransaction`, `createPendingTransaction`.
+
+
+
+- Ledger module: types, `createLedgerEntry`, `createLedgerEntryService`.
+
+
+
+- `database.ts` mein `withTransaction`: `BEGIN`, `COMMIT`, error pe `ROLLBACK`, phir `client.release()`.
+
+
+
+Abhi repository `const db = client ?? pool` likhti hai, lekin query abhi bhi `pool.query` pe hai. `withTransaction` kahin call nahi ho rahi.
