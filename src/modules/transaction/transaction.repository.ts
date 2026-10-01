@@ -6,11 +6,11 @@ export async function createTransaction(
     type: Transaction["type"], //DEPOSIT, WITHDRAWAL, TRANSFER
     amount: string, //"1000.00"
     currency: string, //INR
-    reference?: string //Ruchi sent ₹1 to you
+    reference?: string, //Ruchi sent ₹1 to you
     client?: PoolClient
 ): Promise<Transaction> { //{id: string, type: Transaction["type"], status: Transaction["status"], amount: string, currency: string, reference: string | null, createdAt: Date}
-    const db =client?? pool;
-    const result = await pool.query<Transaction>(
+    const db = client ?? pool;
+    const result = await db.query<Transaction>(
         `
         INSERT INTO transactions (
             type,
@@ -57,3 +57,18 @@ currency: INR
 reference: null
 created_at: 2026-09-30T00:00:00.000Z
 */
+
+
+export async function completeTransaction(
+    transactionId: string,
+    client: PoolClient
+): Promise<void> {
+    await client.query(
+        `
+        UPDATE transactions
+        SET status = 'COMPLETED'
+        WHERE id = $1
+        `,
+        [transactionId]
+    );
+}

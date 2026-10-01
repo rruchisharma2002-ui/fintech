@@ -360,6 +360,9 @@ Records the financial effect of that event — Ruchi DEBIT ₹1, you CREDIT ₹1
 Ye ek Postgres ka concept hai, jaise MongoDB mein aggregation pipeline.
 
 
+ACID:
+Atomicity ka matlab: All or Nothing
+Consistency ka matlab: Transaction ke baad database valid state mein rehna chahiye.
 
 ## Atomicity
 Agar kahin **atomic** ya **atomicity** dikhe, iska matlab hai **single unit**: ya to complete hoga, ya hoga hi nahi.

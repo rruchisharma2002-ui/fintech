@@ -1,3 +1,4 @@
+import { PoolClient } from "pg";
 import { pool } from "../../config/database.js";
 import { Account } from "./account.types.js";
 // [post]create account for a user by userID
@@ -73,6 +74,55 @@ export async function findAccountById(
         FROM accounts
         WHERE id = $1
           AND user_id = $2
+        `,
+        [accountId, userId]
+    );
+
+    if (result.rows.length === 0) {
+        return null;
+    }
+
+    return result.rows[0];
+}
+// to update balance
+export  async function increaseAccountBalance(
+     accountId:string,
+     amount:string,
+     client:PoolClient
+):Promise<void>{
+    await client.query(
+        `
+        UPDATE accounts 
+        SET balance =balance +$1,
+        updated_at =NOW()
+        WHERE id =$2
+         `,
+         [amount,accountId]
+    );
+}
+
+//
+export async function findAccountByIdForUpdate(
+    accountId: string,
+    userId: string,
+    client: PoolClient
+): Promise<Account | null> {
+    const result = await client.query<Account>(
+        `
+        SELECT
+            id,
+            user_id AS "userId",
+            account_number AS "accountNumber",
+            type,
+            currency,
+            status,
+            balance,
+            created_at AS "createdAt",
+            updated_at AS "updatedAt"
+        FROM accounts
+        WHERE id = $1
+          AND user_id = $2
+        FOR UPDATE
         `,
         [accountId, userId]
     );

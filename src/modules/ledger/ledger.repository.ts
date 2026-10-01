@@ -10,7 +10,7 @@ export async function createLedgerEntry(
 ): Promise<LedgerEntry> {
     const db = client ?? pool;
 
-    const result = await pool.query<LedgerEntry>(
+    const result = await db.query<LedgerEntry>(
         `
         INSERT INTO ledger_entries (
             transaction_id,

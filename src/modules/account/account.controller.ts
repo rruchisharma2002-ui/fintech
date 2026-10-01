@@ -3,6 +3,7 @@ import {
     createUserAccount,
     getUserAccounts,
     getUserAccount,
+    depositMoney,
 } from "./account.service.js";
 
 export async function createAccountController(
@@ -83,6 +84,34 @@ export async function getAccountController(
 
         res.status(200).json({
             account,
+        });
+    } catch (error) {
+        next(error);
+    }
+}
+
+export async function depositController(
+    req: Request,
+    res: Response,
+    next: NextFunction
+): Promise<void> {
+    try {
+        if (!req.user) {
+            res.status(401).json({
+                message: "Unauthorized",
+            });
+            return;
+        }
+
+        const transaction = await depositMoney(
+            req.params.accountId as string,
+            req.user.userId,
+            req.body.amount
+        );
+
+        res.status(201).json({
+            message: "Deposit successful",
+            transaction,
         });
     } catch (error) {
         next(error);
