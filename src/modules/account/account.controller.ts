@@ -5,7 +5,6 @@ import {
     getUserAccount,
     depositMoney,
 } from "./account.service.js";
-
 export async function createAccountController(
     req: Request,
     res: Response,
