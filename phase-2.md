@@ -4,7 +4,7 @@ Phase 1 mein user banta hai aur login karta hai. Paisa rakhne ki jagah abhi nahi
 
 User ko paise rakhne hain, isliye **account** chahiye. Account us user ki ek jeb hai: kis type ki hai, kis currency mein hai, aur uska number kya hai.
 
-Abhi account **khali jeb** hai. Balance, deposit, transfer is phase mein nahi. Woh baad ka kaam hai. Yahan sirf jeb banana aur dekhna hai.
+Shuru mein account **khali jeb** thi: sirf jeb banana aur dekhna. Balance, **deposit**, aur **withdrawal** isi phase mein jud gaye. Transfer abhi bhi nahi. Dono ka main point section 9 mein hai. Deposit ka detail section 10, withdrawal ka detail section 12.
 
 Flow wahi hai jo phase 1 mein tha:
 
@@ -54,15 +54,7 @@ Currency client bhejta hai: 3 letters, jaise `inr`. Zod trim karke uppercase kar
 ## 2. Do alag cheezein — `id` aur `accountNumber`
 
 Dono account ko pehchanti hain. Kaam alag hai.
-
-| | `id` | `accountNumber` |
-|---|---|---|
-| Kis ke liye | **internal**. Server, DB, JWT ke baad ki query | **public**. Jo number log dekhte aur dete hain |
-| DB type | `UUID` | `VARCHAR(20)`, UNIQUE |
-| Kaun banata hai | Postgres, `gen_random_uuid()` | sequence `account_number_seq`, start `100000000001` |
-| Example | `a3f2...-....` jaisa UUID | `100000000003` |
-| URL mein | `GET /api/v1/accounts/:accountId` **yahi** maangta hai | is URL mein mat bhejo |
-
+ `GET /api/v1/accounts/:accountId` 
 `id` customer ko account number ki tarah nahi dikhana. Woh row ki primary key hai. Doosri table baad mein isi `id` se judengi (`user_id` bhi isi tarah users ki `id` hai).
 
 `accountNumber` woh number hai jo insaan padh sake. Sequence khud badhti hai: pehla account `100000000001`, agla `100000000002`. Client yeh number nahi bhejta. `INSERT` mein `account_number` column hai hi nahi — DB default laga deti hai.
@@ -123,15 +115,17 @@ DB snake_case hai. Query alias karti hai: `user_id AS "userId"`, `account_number
 
 ---
 
-## 4. Teen API
+## 4. Paanch API
 
-Teenon pe `authenticate` lagti hai. Bina `Authorization: Bearer <accessToken>` ke **401**.
+Paanchon pe `authenticate` lagti hai. Bina `Authorization: Bearer <accessToken>` ke **401**.
 
 | # | Method | Path | Kaam |
 |---|---|---|---|
 | 1 | POST | `/api/v1/accounts` | is user ka naya account. userId token se |
 | 2 | GET | `/api/v1/accounts` | is user ke saare account. userId token se |
 | 3 | GET | `/api/v1/accounts/:accountId` | is user ka **ek** account. `accountId` = UUID `id` |
+| 4 | POST | `/api/v1/accounts/:accountId/deposit` | is account mein paisa jodo. Main section 9 |
+| 5 | POST | `/api/v1/accounts/:accountId/withdraw` | is account se paisa nikalo. Main section 9 |
 
 ### 1. POST — user ke liye account banao
 
@@ -177,11 +171,11 @@ Path: UUID `id`. Account number nahi.
 
 | File | Kaam |
 |---|---|
-| `account.routes.ts` | teen routes, middleware ka order |
-| `account.validation.ts` | POST ki Zod schema |
+| `account.routes.ts` | paanch routes: create, list, get, deposit, withdraw |
+| `account.validation.ts` | create, deposit, aur withdraw ki Zod schema |
 | `account.controller.ts` | status + JSON. DB nahi |
-| `account.service.ts` | controller aur repository ke beech. Abhi seedha pass-through |
-| `account.repository.ts` | `INSERT` aur `SELECT` |
+| `account.service.ts` | deposit aur withdraw: lock, check, transaction, balance, ledger |
+| `account.repository.ts` | `INSERT`, `SELECT`, balance `+` / `−`, `FOR UPDATE` |
 | `account.types.ts` | `Account`, `AccountType`, `AccountStatus` |
 | `src/app.ts` | `app.use("/api/v1/accounts", accountRouter)` |
 | `migrations/004`, `005` | table aur account number sequence |
@@ -235,7 +229,7 @@ export async function createAccountController(...) { ... }
 
 Naam hota hai. File ke andar declaration upar use ho sakti hai, neeche likhi ho tab bhi (hoisting). Export karke doosri file le jaate hain.
 
-**2. Function expression** — function ek variable mein
+**2. Function expression** — function ek variable mein with function keyword
 
 ```ts
 const createAccountController = async function (...) { ... };
@@ -302,8 +296,8 @@ Is repo mein asal mein teen style hain: **declaration** (controller, service, re
 | Code | Kab |
 |---|---|
 | 200 | list, ya ek account mil gaya |
-| 201 | account ban gaya |
-| 400 | POST body galat: type `SAVINGS`/`CHECKING` nahi, ya currency 3 letters nahi |
+| 201 | account ban gaya, deposit successful, ya withdrawal successful |
+| 400 | body galat, account `ACTIVE` nahi, ya withdraw pe balance kam (`"Insufficient balance"`) |
 | 401 | token nahi, token galat, ya `req.user` nahi |
 | 404 | UUID to hai, par is user ka woh account nahi |
 | 500 | DB error. UUID ki jagah account number bhejna abhi yahin aata hai |
@@ -312,11 +306,6 @@ Is repo mein asal mein teen style hain: **declaration** (controller, service, re
 
 ## Is phase mein nahi hai
 
-1. **Balance nahi.** Account mein paise ka column nahi. Deposit / withdraw / transfer nahi.
-2. **Account number se dhoondhne ki API nahi.** Number public hai, lookup abhi `id` se hai.
-3. **Status change nahi.** Sab `ACTIVE` bante hain. Suspend / close ka route nahi.
-4. **Galat `accountId` pe 400 nahi.** UUID na ho to Postgres 500 deta hai.
-5. **Service abhi rule nahi lagati.** Woh repository ko forward karti hai. Limit (ek user ke kitne SAVINGS) baad mein yahin aayegi, controller mein nahi.
 
 ---Transaction: Records what business event happened — e.g., Ruchi sent ₹1 to you.
 ---Ledger: Records the financial effect of that event — Ruchi DEBIT ₹1, you CREDIT ₹1.
@@ -371,54 +360,318 @@ Suppose money distribute karni hai 10 people mein. 4 mein ho gayi, 5th mein erro
 Ya to sabhi, ya kuch bhi nahi. Treat all as a single unit.
 Isme **commit** aur **rollback** aata hai. 10 ko money distribute ho gayi to commit. Beech mein fail hua to rollback. Yeh `database.ts` mein handle hoga.
 
-
-
 ## Repository aur same client
-
-
-
 Repositories should use the same PostgreSQL client when they are part of a transaction.
-
-
-
 Right now the repository does this:
+```ts
+pool.query(...)
+```
+## Aaj kya kiya
+- `transactions` table (migration 006) aur `ledger_entries` table (migration 007).
+- `accounts` pe `balance` column, default `0` (migration 008). `npm run migrate -- up` chal chuka hai.
+- Transaction module: types, `createTransaction`, `createPendingTransaction`.
+- Ledger module: types, `createLedgerEntry`, `createLedgerEntryService`.
+- `database.ts` mein `withTransaction`: `BEGIN`, `COMMIT`, error pe `ROLLBACK`, phir `client.release()`.
+Deposit isi `withTransaction` ko call karti hai. Transaction aur ledger repository `const db = client ?? pool` use karti hain, phir `db.query`. Account ki balance query seedha `client.query` pe hai, kyunki lock aur update transaction ke andar hone chahiye.
 
+---
 
+## 7. `DB_PORT` string hai, Pool number maangta hai
+
+Environment variable hamesha **string** hoti hai.
 
 ```ts
-
-
-
-pool.query(...)
-
-
-
+process.env.DB_PORT
 ```
 
+`.env` mein `DB_PORT=5432` likha ho tab bhi JavaScript ko yeh milta hai:
 
+```text
+"5432"
+```
 
-## Aaj kya kiya
+Number nahi. Quotes wali text.
 
+PostgreSQL ka `Pool` port ke liye **number** maangta hai. String de doge to type match nahi karta.
 
+Is project mein `src/config/env.ts` convert karti hai:
 
-- `transactions` table (migration 006) aur `ledger_entries` table (migration 007).
+```ts
+port: Number(getEnv("DB_PORT"))
+```
 
+`getEnv` string return karti hai. `Number(...)` usko number bana deta hai:
 
+```text
+"5432"  →  5432
+```
 
-- `accounts` pe `balance` column, default `0` (migration 008). `npm run migrate -- up` chal chuka hai.
+`database.ts` wahi number Pool ko deta hai: `port: env.db.port`.
 
+`Number` tabhi theek hai jab string sach mein number ho. `"5432"` se `5432` banta hai. Khali ya galat value pe `NaN` ban sakta hai. `getEnv` pehle check karti hai ki value hai. Port ki extra range check abhi nahi hai.
 
+---
 
-- Transaction module: types, `createTransaction`, `createPendingTransaction`.
+## 8. Paisa ka rishta — user se balance tak
 
+Account khali jeb nahi rahi. Paisa is chain se chalta hai:
 
+```text
+USER
+ │
+ │ owns
+ ▼
+ACCOUNT
+ │
+ │ participates in
+ ▼
+TRANSACTION
+ │
+ │ produces
+ ▼
+LEDGER ENTRIES
+ │
+ ├── DEBIT
+ └── CREDIT
+ │
+ ▼
+LEDGER
+ │
+ ▼
+Account's financial position
+ │
+ ▼
+BALANCE
+```
 
-- Ledger module: types, `createLedgerEntry`, `createLedgerEntryService`.
+**
+# Idempotency
+Financial APIs cannot blindly execute the same request twice.
 
+Imagine:
 
+Client
 
-- `database.ts` mein `withTransaction`: `BEGIN`, `COMMIT`, error pe `ROLLBACK`, phir `client.release()`.
+  ↓
 
+Transfer ₹1,000
 
+  ↓
 
-Abhi repository `const db = client ?? pool` likhti hai, lekin query abhi bhi `pool.query` pe hai. `withTransaction` kahin call nahi ho rahi.
+Server processes it
+
+  ↓
+
+Network timeout
+
+The client doesn't know whether it succeeded.
+
+It retries:
+Transfer ₹1,000
+Without protection:
+₹1,000 transferred+1,000 transferred again
+❌ Very bad.
+So we'll learn:Idempotency-Key and build idempotent financial operations.
+
+**
+| Cheez | Kya record karti hai | Example |
+|---|---|---|
+| Transaction | business event kya hua | Ruchi ne ₹1 bheja |
+| Ledger entry | us event ka financial effect | Ruchi **DEBIT** ₹1, doosra account **CREDIT** ₹1 |
+| Balance | account ki position, ledger ke baad | account pe kitna paisa hai |
+
+Deposit mein doosra account nahi hota. Paisa bahar se is account mein aata hai, isliye ledger pe sirf **CREDIT** lagta hai. Balance `balance + amount` se badhta hai.
+
+Withdrawal bhi ek hi account hai. Paisa account se bahar jaata hai, isliye ledger pe sirf **DEBIT** lagta hai. Balance `balance - amount` se ghatta hai. Doosra account nahi, isliye doosri ledger entry nahi.
+
+---
+
+## 9. Main — deposit aur withdrawal
+
+Dono complete hain. Route, Zod, controller, service, repository. Transfer nahi. Idempotency bhi nahi: same POST do baar bhejoge to paisa do baar judega ya katega.
+
+Dono ka shape ek jaisa hai. Farq sirf direction aur balance check ka hai.
+
+| | Deposit | Withdrawal |
+|---|---|---|
+| Method | POST | POST |
+| Path | `/api/v1/accounts/:accountId/deposit` | `/api/v1/accounts/:accountId/withdraw` |
+| `accountId` | UUID `id`. Account number nahi | wahi |
+| Auth | `authenticate`. Token se `userId` | wahi |
+| Body | `{ "amount": "1000.00" }` | wahi |
+| Zod | `depositSchema` | `withdrawSchema`. Rule same |
+| Service | `depositMoney` | `withdrawMoney` |
+| Paisa | andar. `balance + amount` | bahar. `balance - amount` |
+| Transaction type | `DEPOSIT` | `WITHDRAWAL` |
+| Ledger | **CREDIT** | **DEBIT** |
+| Extra check | nahi | `balance >= amount` |
+| Kam balance | — | **400** `"Insufficient balance"`. Paisa nahi katta |
+| Account nahi | **404** `"Account not found"` | wahi |
+| `ACTIVE` nahi | **400** `"Account is not active"` | wahi |
+| Success | **201** `"Deposit successful"` | **201** `"Withdrawal successful"` |
+
+`amount` string hai, number nahi. Paisa decimal text ki tarah rehta hai, float rounding se bache. Zod: pattern `^\d+(\.\d{1,2})?$`, aur `Number(value) > 0`. `1000`, `1000.5`, `1000.50` chalega. `0`, `-10`, `10.555`, `"abc"` → **400**. DB tak nahi jaata.
+
+Dono `withTransaction` ke andar hain. Ek client, ek PostgreSQL transaction. `BEGIN`, ant mein `COMMIT`. Beech mein throw → `ROLLBACK`. Transaction row, balance, aur ledger entry teeno wapas. Ya to pura kaam, ya kuch bhi nahi.
+
+Order, dono mein:
+
+1. `findAccountByIdForUpdate` — `id` **aur** `user_id`, `FOR UPDATE`. Row lock. Do request ek saath same balance na badal dein.
+2. Account is user ka nahi → `AppError` **404**.
+3. `status !== "ACTIVE"` → `AppError` **400**.
+4. Withdrawal pe extra: `Number(account.balance) < Number(amount)` → `AppError` **400** `"Insufficient balance"`. Deposit pe yeh check nahi. Paisa bahar se aata hai.
+5. `createTransaction` — row `PENDING`. Currency account ki hai, client nahi bhejta. `reference` null.
+6. Balance update. Deposit `increaseAccountBalance`. Withdrawal `decreaseAccountBalance`.
+7. `createLedgerEntry` — deposit **CREDIT**, withdrawal **DEBIT**. Same amount, same account.
+8. `completeTransaction` — DB status `COMPLETED`.
+9. `COMMIT`. Lock chhoot-ta hai.
+
+Success body:
+
+```json
+{ "message": "Deposit successful", "transaction": { } }
+```
+
+Withdrawal ka message `"Withdrawal successful"` hai. Deposit response mein `transaction.status` code `"COMPLETED"` set karke bhejta hai. Withdrawal woh spread nahi karti: DB pe status `COMPLETED` ho chuka hota hai, response `createTransaction` wala object hai.
+
+Postman: balance `0.00` pe `POST .../withdraw` aur `{ "amount": "40.00" }` → **400** `"Insufficient balance"`. Request ka naam deposit ho, URL `/withdraw` ho to yeh withdraw hi hai. Paisa jodna ho to path `/deposit` hona chahiye. Pehle deposit, phir utna ya kam withdraw.
+
+UUID ki jagah account number → Postgres error → **500**. Yeh `AppError` nahi hai.
+
+---
+
+## 10. Deposit API — account mein paisa jodna
+
+Deposit API ka kaam hai **user ke account mein paisa add karna**.
+
+Chauthi API hai. Pehli teen account banati ya dikhati hain. Yeh paise badalti hai.
+
+| | |
+|---|---|
+| Method | POST |
+| Path | `/api/v1/accounts/:accountId/deposit` |
+| `accountId` | UUID `id`. Account number nahi |
+| Auth | `authenticate`. Token se `userId` |
+| Body check | `validateBody(depositSchema)` |
+
+Body sirf amount. String hai, number nahi, kyunki paisa decimal text ki tarah rakhte hain (`"1000.00"`), float rounding se bache.
+
+```json
+{ "amount": "1000.00" }
+```
+
+Zod rule:
+
+- pattern `^\d+(\.\d{1,2})?$` — poora number, ya point ke baad 1 ya 2 digit
+- `Number(value) > 0` — zero ya minus nahi
+
+`1000` chalega. `1000.5` chalega. `1000.50` chalega. `0`, `-10`, `10.555`, `"abc"` → **400**. DB tak nahi jaata.
+
+### Andar kya hota hai
+
+`depositController` → `depositMoney(accountId, userId, amount)`.
+
+Sab `withTransaction` ke andar hai. Ek client, ek PostgreSQL transaction. Beech mein fail hua to `ROLLBACK`: transaction row, balance, aur ledger entry teeno wapas. Ya to pura deposit, ya kuch bhi nahi.
+
+1. `findAccountByIdForUpdate` — `id` **aur** `user_id` match, `FOR UPDATE`. Row lock. Do request ek saath same account ka balance na badal dein.
+2. Account is user ka nahi → `AppError` **404** `"Account not found"`.
+3. `status !== "ACTIVE"` → `AppError` **400** `"Account is not active"`.
+4. `createTransaction("DEPOSIT", amount, account.currency, undefined, client)`. Row `PENDING` banti hai. Currency account ki hai, client nahi bhejta. `reference` null.
+5. `increaseAccountBalance` — `balance = balance + amount`, `updated_at = NOW()`.
+6. `createLedgerEntry` — isi transaction aur account pe **CREDIT**, same amount.
+7. `completeTransaction` — status `COMPLETED`.
+8. **201** `{ message: "Deposit successful", transaction }`. Response wale object ka `status` `"COMPLETED"` set karke bheja jata hai.
+
+Client wahi `client` repository tak jaata hai. `const db = client ?? pool` ka matlab: client diya hai to transaction wali query, nahi to alag `pool.query`. Deposit wali calls client deti hain, isliye woh `BEGIN` / `COMMIT` ke andar rehti hain.
+
+Account na mile to **404**. Active na ho to **400**. Dono `AppError` hain, isliye error middleware wahi message aur status bhejti hai, **500** nahi. UUID ki jagah account number bhejne pe pehle jaisa Postgres error, phir **500**.
+
+---
+
+## 11. Idempotency — same request do baar paisa do baar nahi
+
+Financial API same request ko andhe ban kar do baar nahi chala sakti.
+
+```text
+Client
+  ↓
+Transfer ₹1,000
+  ↓
+Server process kar chuka
+  ↓
+Network timeout
+```
+
+Client ko pata nahi chala success hua ya nahi. Woh retry karta hai:
+
+```text
+Transfer ₹1,000
+```
+
+Bina protection:
+
+```text
+₹1,000 transfer ho gaya
++
+₹1,000 phir se transfer ho gaya
+```
+
+Deposit aur withdrawal pe wahi nuksan: timeout ke baad retry, balance do baar badh jaana ya do baar kat jaana.
+
+**Idempotency** ka matlab: wahi request dubara aaye to effect ek baar ho. Doosri call naya paisa na jode. Pehli wali result wapas de, ya bata de ki yeh request pehle ho chuki hai.
+
+Abhi deposit aur withdrawal pe yeh protection **nahi** hai. Har POST naya transaction, naya ledger entry, aur balance phir se badal deti hai. Same body do baar bhejogi to paisa do baar judega ya katega. Idempotency key (client ki ek unique id jo server pehli call yaad rakhe) baad ka kaam hai.
+
+---
+
+## 12. Withdrawal API — account se paisa nikalna
+
+Withdrawal complete hai. `POST /api/v1/accounts/:accountId/withdraw` wired hai: `authenticate`, `validateBody(withdrawSchema)`, `withdrawController`, `withdrawMoney`.
+
+Deposit ka ulta hai. Paisa account mein nahi aata, account se **bahar** jaata hai.
+
+`withdrawMoney` pehle se bane functions ko **order** mein call karti hai. Naya SQL nahi. Koi step beech mein toot gaya to uske baad wala chalta hi nahi, aur `ROLLBACK` ho jaata hai.
+
+### Pehle lock — beech mein koi aur query na aaye
+
+Sab `withTransaction` ke andar hai. Wahi ek client, wahi PostgreSQL transaction.
+
+`withTransaction` shuru mein `BEGIN` karti hai. `withdrawMoney` ke andar jitni queries hain, sab isi client pe chalti hain. Ant mein, agar koi throw nahi hua, `COMMIT`. Koi bhi step pe `throw` hua — account nahi mila, active nahi, balance kam, ya network / DB error — to `ROLLBACK`. Jo rows is call ne likhi thin, woh commit nahi hoti.
+
+Lock pehla kaam hai, balance check se bhi pehle:
+
+`findAccountByIdForUpdate` — `id` **aur** `user_id` match, `FOR UPDATE`.
+
+`FOR UPDATE` is row ko pakad leta hai jab tak yeh transaction `COMMIT` ya `ROLLBACK` na ho. Doosri request isi account ka balance padhe ya badle, woh is lock ke peeche wait karti hai. Isliye beech mein koi aur withdrawal, deposit, ya balance query is row ko badal nahi sakti. Do request ek saath same paise nahi kaat sakte.
+
+Lock aur `BEGIN` / `COMMIT` mil kar atomicity dete hain. Network beech mein gir jaye to aadha withdrawal nahi bachta: transaction row, balance, aur ledger entry teeno wapas. Ya to pura withdrawal, ya kuch bhi nahi.
+
+### Condition — paisa hai ya nahi
+
+Lock ke baad teen check. Koi bhi fail ho to throw, aur `withTransaction` rollback kar deti hai. Decrease, ledger, complete — teeno skip.
+
+1. Account is user ka nahi → `AppError` **404** `"Account not found"`.
+2. `status !== "ACTIVE"` → `AppError` **400** `"Account is not active"`.
+3. `Number(account.balance) < Number(amount)` → `AppError` **400** `"Insufficient balance"`.
+
+Teesra check deposit mein nahi hai. Deposit mein paisa bahar se aata hai, balance kam hone ka sawal nahi. Withdrawal mein user ne jitna maanga, utna account pe hona chahiye. Kam hai to balance **chhuta hi nahi**.
+
+`Number(...)` isliye: balance aur amount dono string hain (`"1000.00"`). Compare karne ke liye number banate hain. SQL mein cut `balance - $1` se hota hai, string amount ke saath, taaki paisa Postgres ke numeric pe rahe.
+
+### Paisa hai to yeh order, ek ke baad ek
+
+Balance kaafi hai tab hi aage. Har call pehle se bani function hai. `withdrawMoney` naya SQL nahi likhti.
+
+1. `createTransaction("WITHDRAWAL", amount, account.currency, undefined, client)`. Row `PENDING` banti hai. Currency account ki hai. `reference` null. Type `WITHDRAWAL` hai, `DEPOSIT` nahi.
+2. `decreaseAccountBalance` — `balance = balance - amount`, `updated_at = NOW()`. Ek `UPDATE`. Rupee ek-ek karke nahi kat-te. Amount ek baar minus hoti hai.
+3. `createLedgerEntry` — isi transaction aur account pe **DEBIT**, same amount. Deposit pe **CREDIT** tha, kyunki paisa andar aaya tha. Yahan paisa bahar gaya, isliye ledger pe sirf **DEBIT**. Doosra account nahi, isliye doosri entry nahi.
+4. `completeTransaction` — `transactions.status` `COMPLETED`.
+5. `withTransaction` `COMMIT` karti hai. Tab ja kar lock chhoot-ta hai aur doosri query is row ko dekh sakti hai.
+
+Beech mein step 2, 3, ya 4 fail ho to step 5 commit nahi hota. `ROLLBACK`: `WITHDRAWAL` row bhi nahi rehti, balance purana rehta hai, DEBIT entry bhi nahi rehti.
+
+`withdrawController` **201** bhejti hai: `{ message: "Withdrawal successful", transaction }`.
+
+`withdrawMoney` return wohi transaction object karti hai jo `createTransaction` ne diya tha. DB pe status `COMPLETED` ho chuka hota hai. Deposit response mein object ka `status` code se `"COMPLETED"` set karke bhejti hai. Withdrawal woh spread nahi karti.
+
+Account na mile → **404**. Active na ho, ya balance kam ho → **400**. Teeno `AppError` hain. Plain `Error` hota to error middleware **500** `"Internal server error"` bhejti. UUID ki jagah account number abhi bhi **500** hai.

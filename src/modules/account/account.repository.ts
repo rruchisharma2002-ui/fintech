@@ -22,6 +22,7 @@ export async function createAccount(
             type,
             currency,
             status,
+            balance,
             created_at AS "createdAt",
             updated_at AS "updatedAt"
         `,
@@ -43,6 +44,7 @@ export async function findAccountsByUserId(
             type,
             currency,
             status,
+            balance,
             created_at AS "createdAt",
             updated_at AS "updatedAt"
         FROM accounts
@@ -69,6 +71,7 @@ export async function findAccountById(
             type,
             currency,
             status,
+            balance,
             created_at AS "createdAt",
             updated_at AS "updatedAt"
         FROM accounts
@@ -100,7 +103,22 @@ export  async function increaseAccountBalance(
          [amount,accountId]
     );
 }
-
+export async function decreaseAccountBalance(
+    accountId: string,
+    amount: string,
+    client: PoolClient
+): Promise<void> {
+    await client.query(
+        `
+        UPDATE accounts
+        SET
+            balance = balance - $1,
+            updated_at = NOW()
+        WHERE id = $2
+        `,
+        [amount, accountId]
+    );
+}
 //
 export async function findAccountByIdForUpdate(
     accountId: string,

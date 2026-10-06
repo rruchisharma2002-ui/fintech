@@ -12,6 +12,7 @@ export type Account = {
     type: AccountType;
     currency: string;
     status: AccountStatus;
+    balance: string;
     createdAt: Date;
     updatedAt: Date;
 };
