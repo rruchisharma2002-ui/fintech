@@ -4,12 +4,13 @@ import {
     getUserAccounts,
     getUserAccount,
     depositMoney,
-    withdrawMoney
+    withdrawMoney,
+    transferMoney
 } from "./account.service.js";
 export async function createAccountController(
     req: Request,
     res: Response,
-    next: NextFunction
+    next: NextFunction //error handling middleware which is in app.ts
 ): Promise<void> {
     try {
         const { type, currency } = req.body;
@@ -145,3 +146,32 @@ export async function withdrawController(
         next(error);
     }
 }
+
+export async function transferController(
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({
+          message: "Unauthorized",
+        });
+        return;
+      }
+  
+      const transaction = await transferMoney(
+        req.params.accountId as string,
+        req.user.userId,
+        req.body.toAccountId,
+        req.body.amount
+      );
+  
+      res.status(201).json({
+        message: "Transfer successful",
+        transaction,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }

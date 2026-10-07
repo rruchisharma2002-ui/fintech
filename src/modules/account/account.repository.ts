@@ -103,6 +103,7 @@ export  async function increaseAccountBalance(
          [amount,accountId]
     );
 }
+
 export async function decreaseAccountBalance(
     accountId: string,
     amount: string,
@@ -119,35 +120,32 @@ export async function decreaseAccountBalance(
         [amount, accountId]
     );
 }
-//
+
 export async function findAccountByIdForUpdate(
     accountId: string,
-    userId: string,
+    userId: string | undefined,
     client: PoolClient
-): Promise<Account | null> {
-    const result = await client.query<Account>(
-        `
-        SELECT
-            id,
-            user_id AS "userId",
-            account_number AS "accountNumber",
-            type,
-            currency,
-            status,
-            balance,
-            created_at AS "createdAt",
-            updated_at AS "updatedAt"
-        FROM accounts
-        WHERE id = $1
-          AND user_id = $2
-        FOR UPDATE
-        `,
-        [accountId, userId]
+  ): Promise<Account | null> {
+    const result = await client.query(
+      `SELECT
+         id,
+         user_id AS "userId",
+         account_number AS "accountNumber",
+         type,
+         currency,
+         status,
+         balance,
+         created_at AS "createdAt",
+         updated_at AS "updatedAt"
+       FROM accounts
+       WHERE id = $1
+         AND ($2::uuid IS NULL OR user_id = $2)
+       FOR UPDATE`,
+      [accountId, userId ?? null]
     );
-
     if (result.rows.length === 0) {
         return null;
     }
 
-    return result.rows[0];
+    return result.rows[0] ?? null;
 }

@@ -28,3 +28,14 @@ import { z } from "zod";
             "Amount must be greater than zero"
         ),
 }); 
+
+export const transferSchema = z.object({
+    toAccountId: z.string().uuid("Invalid receiver account ID"),
+    amount: z
+      .string()
+      .regex(/^\d+(\.\d{1,2})?$/, "Amount must be a valid monetary value")
+      .refine(
+        (value) => Number(value) > 0,
+        "Amount must be greater than zero"
+      ),
+  });

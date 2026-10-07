@@ -1,7 +1,7 @@
-import { createAccount,findAccountsByUserId,findAccountById, decreaseAccountBalance } from "./account.repository.js";
+import { createAccount, findAccountsByUserId, findAccountById, decreaseAccountBalance } from "./account.repository.js";
 import { Account } from "./account.types.js";
 import { withTransaction } from "../../config/database.js";
-import { createTransaction,completeTransaction } from "../transaction/transaction.repository.js";
+import { createTransaction, completeTransaction } from "../transaction/transaction.repository.js";
 import { createLedgerEntry } from "../ledger/ledger.repository.js";
 import { AppError } from "../../shared/errors/app.error.js";
 import {
@@ -13,7 +13,7 @@ export async function createUserAccount(
     type: Account["type"],
     currency: string
 ): Promise<Account> {
-    const account =await createAccount(
+    const account = await createAccount(
         userId,
         type,
         currency
@@ -86,10 +86,7 @@ export async function depositMoney(
 
         await completeTransaction(transaction.id, client);
 
-        return {
-            ...transaction,
-            status: "COMPLETED" as const,
-        };
+        return transaction;
     });
 }
 
@@ -150,3 +147,114 @@ export async function withdrawMoney(
 
     });
 }
+
+export async function transferMoney(
+    fromAccountId: string,
+    userId: string,
+    toAccountId: string,
+    amount: string
+  ) {
+    return await withTransaction(async (client) => {
+      // Prevent self-transfer
+      if (fromAccountId === toAccountId) {
+        throw new AppError(400, "Cannot transfer to the same account");
+      }
+  
+      // Always lock accounts in the same order
+      const accountIds = [fromAccountId, toAccountId].sort();
+  
+      const firstAccount = await findAccountByIdForUpdate(
+        accountIds[0],
+        undefined,
+        client
+      );
+  
+      const secondAccount = await findAccountByIdForUpdate(
+        accountIds[1],
+        undefined,
+        client
+      );
+  
+      if (!firstAccount || !secondAccount) {
+        throw new AppError(404, "Account not found");
+      }
+  
+      // Recover the actual business roles after sorted locking
+      const sender =
+        firstAccount.id === fromAccountId
+          ? firstAccount
+          : secondAccount;
+  
+      const receiver =
+        firstAccount.id === toAccountId
+          ? firstAccount
+          : secondAccount;
+  
+      // Sender must belong to logged-in user
+      if (sender.userId !== userId) {
+        throw new AppError(403, "Unauthorized");
+      }
+  
+      // Both accounts must be active
+      if (
+        sender.status !== "ACTIVE" ||
+        receiver.status !== "ACTIVE"
+      ) {
+        throw new AppError(400, "Both accounts must be active");
+      }
+  
+      // Sender must have enough money
+      if (Number(sender.balance) < Number(amount)) {
+        throw new AppError(400, "Insufficient balance");
+      }
+  
+      // Create transfer transaction
+      const transaction = await createTransaction(
+        "TRANSFER",
+        amount,
+        sender.currency,
+        undefined,
+        client
+      );
+  
+      // Debit sender
+      await decreaseAccountBalance(
+        sender.id,
+        amount,
+        client
+      );
+  
+      // Credit receiver
+      await increaseAccountBalance(
+        receiver.id,
+        amount,
+        client
+      );
+  
+      // Sender ledger entry
+      await createLedgerEntry(
+        transaction.id,
+        sender.id,
+        "DEBIT",
+        amount,
+        client
+      );
+  
+      // Receiver ledger entry
+      await createLedgerEntry(
+        transaction.id,
+        receiver.id,
+        "CREDIT",
+        amount,
+        client
+      );
+  
+      // Mark transaction completed
+      await completeTransaction(
+        transaction.id,
+        client
+      );
+  
+      return transaction;
+    });
+  }
