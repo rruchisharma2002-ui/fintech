@@ -4,7 +4,7 @@ Phase 1 mein user banta hai aur login karta hai. Paisa rakhne ki jagah abhi nahi
 
 User ko paise rakhne hain, isliye **account** chahiye. Account us user ki ek jeb hai: kis type ki hai, kis currency mein hai, aur uska number kya hai.
 
-Shuru mein account **khali jeb** thi: sirf jeb banana aur dekhna. Balance, **deposit**, aur **withdrawal** isi phase mein jud gaye. Transfer abhi bhi nahi. Dono ka main point section 9 mein hai. Deposit ka detail section 10, withdrawal ka detail section 12.
+Shuru mein account **khali jeb** thi: sirf jeb banana aur dekhna. Balance, **deposit**, **withdrawal**, aur **transfer** isi phase mein jud gaye. Deposit aur withdrawal ka short compare section 9 mein hai. Deposit ka detail section 10, withdrawal ka detail section 12, transfer ka detail section 13.
 
 Flow wahi hai jo phase 1 mein tha:
 
@@ -115,9 +115,9 @@ DB snake_case hai. Query alias karti hai: `user_id AS "userId"`, `account_number
 
 ---
 
-## 4. Paanch API
+## 4. Chheh API
 
-Paanchon pe `authenticate` lagti hai. Bina `Authorization: Bearer <accessToken>` ke **401**.
+Chhehon pe `authenticate` lagti hai. Bina `Authorization: Bearer <accessToken>` ke **401**.
 
 | # | Method | Path | Kaam |
 |---|---|---|---|
@@ -126,6 +126,7 @@ Paanchon pe `authenticate` lagti hai. Bina `Authorization: Bearer <accessToken>`
 | 3 | GET | `/api/v1/accounts/:accountId` | is user ka **ek** account. `accountId` = UUID `id` |
 | 4 | POST | `/api/v1/accounts/:accountId/deposit` | is account mein paisa jodo. Main section 9 |
 | 5 | POST | `/api/v1/accounts/:accountId/withdraw` | is account se paisa nikalo. Main section 9 |
+| 6 | POST | `/api/v1/accounts/:accountId/transfer` | is account se doosre account mein paisa bhejo. Detail section 13 |
 
 ### 1. POST — user ke liye account banao
 
@@ -171,10 +172,10 @@ Path: UUID `id`. Account number nahi.
 
 | File | Kaam |
 |---|---|
-| `account.routes.ts` | paanch routes: create, list, get, deposit, withdraw |
-| `account.validation.ts` | create, deposit, aur withdraw ki Zod schema |
+| `account.routes.ts` | chheh routes: create, list, get, deposit, withdraw, transfer |
+| `account.validation.ts` | create, deposit, withdraw, aur transfer ki Zod schema |
 | `account.controller.ts` | status + JSON. DB nahi |
-| `account.service.ts` | deposit aur withdraw: lock, check, transaction, balance, ledger |
+| `account.service.ts` | deposit, withdraw, aur transfer: lock, check, transaction, balance, ledger |
 | `account.repository.ts` | `INSERT`, `SELECT`, balance `+` / `−`, `FOR UPDATE` |
 | `account.types.ts` | `Account`, `AccountType`, `AccountStatus` |
 | `src/app.ts` | `app.use("/api/v1/accounts", accountRouter)` |
@@ -296,10 +297,11 @@ Is repo mein asal mein teen style hain: **declaration** (controller, service, re
 | Code | Kab |
 |---|---|
 | 200 | list, ya ek account mil gaya |
-| 201 | account ban gaya, deposit successful, ya withdrawal successful |
-| 400 | body galat, account `ACTIVE` nahi, ya withdraw pe balance kam (`"Insufficient balance"`) |
+| 201 | account ban gaya, deposit successful, withdrawal successful, ya transfer successful |
+| 400 | body galat, account `ACTIVE` nahi, same account pe transfer, ya balance kam (`"Insufficient balance"`) |
 | 401 | token nahi, token galat, ya `req.user` nahi |
-| 404 | UUID to hai, par is user ka woh account nahi |
+| 403 | transfer pe source account is user ka nahi |
+| 404 | UUID to hai, par account nahi. Transfer pe sender ya receiver mein se koi bhi na mile |
 | 500 | DB error. UUID ki jagah account number bhejna abhi yahin aata hai |
 
 ---
@@ -484,11 +486,13 @@ Deposit mein doosra account nahi hota. Paisa bahar se is account mein aata hai, 
 
 Withdrawal bhi ek hi account hai. Paisa account se bahar jaata hai, isliye ledger pe sirf **DEBIT** lagta hai. Balance `balance - amount` se ghatta hai. Doosra account nahi, isliye doosri ledger entry nahi.
 
+Transfer mein do account hain, transaction ek. Sender pe **DEBIT** aur `balance - amount`. Receiver pe **CREDIT** aur `balance + amount`. Dono ledger entries usi ek `TRANSFER` transaction se judi hoti hain.
+
 ---
 
 ## 9. Main — deposit aur withdrawal
 
-Dono complete hain. Route, Zod, controller, service, repository. Transfer nahi. Idempotency bhi nahi: same POST do baar bhejoge to paisa do baar judega ya katega.
+Dono complete hain. Route, Zod, controller, service, repository. Transfer bhi complete hai, detail section 13. Idempotency teeno pe nahi: same POST do baar bhejoge to paisa do baar judega, katega, ya transfer hoga.
 
 Dono ka shape ek jaisa hai. Farq sirf direction aur balance check ka hai.
 
@@ -620,7 +624,7 @@ Deposit aur withdrawal pe wahi nuksan: timeout ke baad retry, balance do baar ba
 
 **Idempotency** ka matlab: wahi request dubara aaye to effect ek baar ho. Doosri call naya paisa na jode. Pehli wali result wapas de, ya bata de ki yeh request pehle ho chuki hai.
 
-Abhi deposit aur withdrawal pe yeh protection **nahi** hai. Har POST naya transaction, naya ledger entry, aur balance phir se badal deti hai. Same body do baar bhejogi to paisa do baar judega ya katega. Idempotency key (client ki ek unique id jo server pehli call yaad rakhe) baad ka kaam hai.
+Abhi deposit, withdrawal, aur transfer pe yeh protection **nahi** hai. Har POST naya transaction, naya ledger entry, aur balance phir se badal deti hai. Same body do baar bhejogi to paisa do baar judega, katega, ya transfer hoga. Idempotency key (client ki ek unique id jo server pehli call yaad rakhe) baad ka kaam hai.
 
 ---
 
@@ -675,3 +679,83 @@ Beech mein step 2, 3, ya 4 fail ho to step 5 commit nahi hota. `ROLLBACK`: `WITH
 `withdrawMoney` return wohi transaction object karti hai jo `createTransaction` ne diya tha. DB pe status `COMPLETED` ho chuka hota hai. Deposit response mein object ka `status` code se `"COMPLETED"` set karke bhejti hai. Withdrawal woh spread nahi karti.
 
 Account na mile → **404**. Active na ho, ya balance kam ho → **400**. Teeno `AppError` hain. Plain `Error` hota to error middleware **500** `"Internal server error"` bhejti. UUID ki jagah account number abhi bhi **500** hai.
+
+---
+
+## 13. Transfer API — ek account se doosre account mein paisa
+
+Transfer complete hai. `POST /api/v1/accounts/:accountId/transfer` wired hai: `authenticate`, `validateBody(transferSchema)`, `transferController`, `transferMoney`.
+
+Deposit aur withdrawal ek account hain. Transfer **do** account hain, transaction **ek**.
+
+| | |
+|---|---|
+| Method | POST |
+| Path | `/api/v1/accounts/:accountId/transfer` |
+| `accountId` | sender ka UUID `id`. Account number nahi. Token wale user ka hona chahiye |
+| Auth | `authenticate`. Token se `userId` |
+| Body check | `validateBody(transferSchema)` |
+
+Body mein receiver aur amount. Dono string.
+
+```json
+{ "toAccountId": "<receiver-uuid>", "amount": "1000.00" }
+```
+
+`toAccountId` Zod pe UUID hona chahiye. Amount ka rule deposit jaisa: pattern `^\d+(\.\d{1,2})?$`, aur `Number(value) > 0`. `0`, `-10`, `10.555`, `"abc"`, ya UUID na ho → **400**. DB tak nahi jaata.
+
+`userId` body mein nahi. Sender path ka `accountId` hai. Receiver body ka `toAccountId` hai. Receiver doosre user ka ho sakta hai. Isliye lock wali query `user_id` se filter nahi karti.
+
+### Pehle same account — lock se pehle
+
+`fromAccountId === toAccountId` → `AppError` **400** `"Cannot transfer to the same account"`. DB call nahi. Apne account se apne account mein paisa nahi jaata.
+
+### Do row, ek order — deadlock na ho
+
+Sab `withTransaction` ke andar hai. `BEGIN`, ant mein `COMMIT`. Koi `throw` → `ROLLBACK`. Transaction row, dono balance, aur dono ledger entries wapas. Ya to pura transfer, ya kuch bhi nahi.
+
+Deposit aur withdrawal ek row `FOR UPDATE` karte hain, aur SQL mein `user_id` bhi match karte hain. Transfer do row lock karta hai, bina user filter ke:
+
+```sql
+WHERE id = $1
+  AND ($2::uuid IS NULL OR user_id = $2)
+FOR UPDATE
+```
+
+`userId` `undefined` jaata hai, isliye `$2` null hai aur sirf `id` se row milti hai. Receiver doosre user ka ho, tab bhi lock lag sake.
+
+Do request ek saath ulta transfer karein — A se B, aur B se A — to order alag hone se deadlock ho sakta hai. Pehli request A lock karke B ka wait kare, doosri B lock karke A ka wait kare. Dono ruk jaayein.
+
+Isliye ids pehle sort hoti hain. Chhota UUID hamesha pehle lock. Phir code unhe wapas sender aur receiver mein baant-ta hai: `firstAccount.id === fromAccountId` to woh sender, warna receiver. Business ka order lock ke baad aata hai, lock ka order hamesha sorted rehta hai.
+
+Dono mein se koi row na mile → `AppError` **404** `"Account not found"`. Message nahi batata kaunsa missing hai.
+
+### Condition — bhejne wala, status, balance
+
+Lock ke baad teen check. Koi bhi fail ho to aage ka paisa nahi chalta, `ROLLBACK` ho jaata hai.
+
+1. `sender.userId !== userId` → `AppError` **403** `"Unauthorized"`. Path ka account is token ka nahi. Deposit aur withdrawal yahan **404** dete hain, kyunki unki SQL `user_id` se filter karti hai aur row hi nahi milti. Transfer mein row pehle mil chuki hoti hai, isliye alag status.
+2. Sender ya receiver `ACTIVE` nahi → `AppError` **400** `"Both accounts must be active"`.
+3. `Number(sender.balance) < Number(amount)` → `AppError` **400** `"Insufficient balance"`. Receiver ke balance ki koi limit nahi. Paisa uske account mein judta hai.
+
+Teeno `AppError` hain. Plain `Error` hota to error middleware inhe **500** `"Internal server error"` bana deti, asli message chhupa kar. UUID ki jagah account number abhi bhi Postgres error hai, phir **500**.
+
+Currency transaction pe sender ke account ki lagti hai. Client currency nahi bhejta. Sender aur receiver ki currency same hai ya nahi, yeh check abhi nahi hai.
+
+### Paisa hai to yeh order, ek ke baad ek
+
+1. `createTransaction("TRANSFER", amount, sender.currency, undefined, client)`. Row `PENDING`. `reference` null.
+2. `decreaseAccountBalance` — sender pe `balance = balance - amount`.
+3. `increaseAccountBalance` — receiver pe `balance = balance + amount`.
+4. `createLedgerEntry` — sender pe **DEBIT**, same amount, isi transaction ki id.
+5. `createLedgerEntry` — receiver pe **CREDIT**, same amount, usi transaction ki id. Do entries, ek event.
+6. `completeTransaction` — `transactions.status` `COMPLETED`.
+7. `COMMIT`. Dono locks chhoot-te hain.
+
+Beech mein koi step fail ho to commit nahi hota. Sender ka paisa kata aur receiver ko na mila, yeh nahi bachta.
+
+`transferController` **201** bhejti hai: `{ message: "Transfer successful", transaction }`.
+
+Return wohi object hai jo `createTransaction` ne diya tha. DB pe status `COMPLETED` ho chuka hota hai. Response ke object mein `status` abhi bhi `"PENDING"` dikhta hai. Withdrawal bhi yahi karti hai. Deposit response mein code `status` ko `"COMPLETED"` set karke bhejti hai.
+
+Idempotency abhi nahi. Same body do baar → do `TRANSFER` rows, paisa do baar.
