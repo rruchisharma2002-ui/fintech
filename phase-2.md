@@ -740,8 +740,82 @@ Lock ke baad teen check. Koi bhi fail ho to aage ka paisa nahi chalta, `ROLLBACK
 
 Teeno `AppError` hain. Plain `Error` hota to error middleware inhe **500** `"Internal server error"` bana deti, asli message chhupa kar. UUID ki jagah account number abhi bhi Postgres error hai, phir **500**.
 
-Currency transaction pe sender ke account ki lagti hai. Client currency nahi bhejta. Sender aur receiver ki currency same hai ya nahi, yeh check abhi nahi hai.
+Currency transaction pe sender ke account ki lagti hai. HTTP client currency nahi bhejta. Sender aur receiver ki currency same hai ya nahi, yeh check abhi nahi hai.
 
+### `client` kya hai
+
+`createTransaction` ka last argument `client` hai:
+
+```ts
+const transaction = await createTransaction(
+    "TRANSFER",
+    amount,
+    sender.currency,
+    undefined,
+    client
+);
+```
+
+Yeh HTTP client nahi hai. Yeh `PoolClient` hai: pool se nikali hui **ek** PostgreSQL connection.
+
+`client` khud commit ya rollback nahi karta. `withTransaction` usi connection pe yeh teen commands chalati hai.
+
+```ts
+const client = await pool.connect();
+
+await client.query("BEGIN");
+const result = await callback(client); // transferMoney ka andar wala code
+await client.query("COMMIT");
+// throw pe: await client.query("ROLLBACK")
+// finally: client.release()
+```
+
+`transferMoney` is callback ke andar hai, isliye usse yahi `client` milta hai. Lock, `INSERT` into `transactions`, sender ka balance, receiver ka balance, dono ledger entries, aur `completeTransaction` — sab isi connection pe jaate hain. Sab ek hi `BEGIN` ke andar rehte hain.
+
+`createTransaction` andar yeh karti hai:
+
+```ts
+const db = client ?? pool;
+```
+
+`client` diya hai to `INSERT` usi open transaction pe chalti hai. `client` na ho to `pool.query` alag connection leti hai, jo is `BEGIN` / `COMMIT` ka hissa nahi hoti. Transfer `client` deti hai, isliye transaction row tabhi pakki hoti hai jab baaki steps bhi succeed hon.
+
+Koi step `throw` kare to `withTransaction` `ROLLBACK` karti hai. `finally` mein `client.release()` connection wapas pool mein daal deta hai.
+--------------------------
+Ledger entry — DEBIT
+await createLedgerEntry(
+    transaction.id,
+    sender.id,
+    "DEBIT",
+    amount,
+    client
+);
+
+Matlab:
+Transaction T123
+Sender A
+DEBIT ₹500
+Ledger ko tum accounting ki diary samjho.
+A account:
+₹500 DEBIT
+23. Ledger entry — CREDIT
+await createLedgerEntry(
+    transaction.id,
+    receiver.id,
+    "CREDIT",
+    amount,
+    client
+);
+
+Matlab:
+Transaction T123
+Receiver B
+CREDIT ₹500
+So ek transfer ke liye:
+A → DEBIT  ₹500
+B → CREDIT ₹500
+Ye double-entry bookkeeping ka concept hai.
+------------------------
 ### Paisa hai to yeh order, ek ke baad ek
 
 1. `createTransaction("TRANSFER", amount, sender.currency, undefined, client)`. Row `PENDING`. `reference` null.
@@ -759,3 +833,149 @@ Beech mein koi step fail ho to commit nahi hota. Sender ka paisa kata aur receiv
 Return wohi object hai jo `createTransaction` ne diya tha. DB pe status `COMPLETED` ho chuka hota hai. Response ke object mein `status` abhi bhi `"PENDING"` dikhta hai. Withdrawal bhi yahi karti hai. Deposit response mein code `status` ko `"COMPLETED"` set karke bhejti hai.
 
 Idempotency abhi nahi. Same body do baar → do `TRANSFER` rows, paisa do baar.
+
+--------------LOCK---------------
+do  requst ik sath na chle
+FOR UPDATE ka simple meaning:
+ IN REPOSITRY-
+ SELECT
+    ...
+FROM accounts
+WHERE id = $1
+FOR UPDATE
+"Is account ki row ko lock kar do, kyunki main ise update karne wala hoon."
+So:
+Request 1
+   ↓
+FOR UPDATE
+   ↓
+Account A 🔐
+Ab Request 2 same account ko lock karne aaye:
+Request 2
+   ↓
+FOR UPDATE
+   ↓
+Account A 🔐
+   ↓
+WAIT ⏳
+Request 1 complete:
+COMMIT
+   ↓
+Lock released 🔓
+Ab Request 2:
+WAIT → continue
+Aur ab woh fresh balance dekhegi.
+
+----------------DEADLOCK------------------
+
+                 transferMoney()
+                       │
+                       ▼
+                withTransaction()
+                       │
+                       ▼
+                     BEGIN
+                       │
+                       ▼
+              Same account check
+                       │
+                       ▼
+                 sort account IDs
+                       │
+                       ▼
+                Lock Account A 🔐
+                       │
+                       ▼
+                Lock Account B 🔐
+                       │
+                       ▼
+              Accounts exist? 
+                  /          \
+                NO            YES
+                ↓               ↓
+             ROLLBACK       Find sender
+                                │
+                                ▼
+                         Security check
+                                │
+                                ▼
+                          ACTIVE check
+                                │
+                                ▼
+                         Balance check
+                                │
+                                ▼
+                     Create transaction
+                                │
+                                ▼
+                     Sender - ₹500
+                                │
+                                ▼
+                    Receiver + ₹500
+                                │
+                                ▼
+                     DEBIT ledger
+                                │
+                                ▼
+                    CREDIT ledger
+                                │
+                                ▼
+                   Transaction complete
+                                │
+                                ▼
+                              COMMIT
+                                │
+                                ▼
+                         Locks released 🔓
+ ----------------------------------------------                        
+ transferMoney(A, Rahul, B, 500)
+              ↓
+        withTransaction()
+              ↓
+            BEGIN
+              ↓
+        A == B ? NO
+              ↓
+        sort([A,B])
+              ↓
+           [A,B]
+              ↓
+        Lock A 🔐
+              ↓
+        Lock B 🔐
+              ↓
+       Both exist? YES
+              ↓
+       Find sender = A
+       Find receiver = B
+              ↓
+       Rahul owns A? YES
+              ↓
+       Both ACTIVE? YES
+              ↓
+       A balance ₹1000
+       Amount ₹500
+              ↓
+       Enough money? YES
+              ↓
+       Create Transaction
+              ↓
+       A = ₹1000 - ₹500
+              ↓
+       A = ₹500
+              ↓
+       B = ₹200 + ₹500
+              ↓
+       B = ₹700
+              ↓
+       Ledger DEBIT ₹500
+              ↓
+       Ledger CREDIT ₹500
+              ↓
+       Transaction COMPLETED
+              ↓
+            COMMIT
+              ↓
+          Locks 🔓
+              ↓
+          SUCCESS ✅

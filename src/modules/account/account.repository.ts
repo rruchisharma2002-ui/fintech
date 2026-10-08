@@ -96,7 +96,7 @@ export  async function increaseAccountBalance(
     await client.query(
         `
         UPDATE accounts 
-        SET balance =balance +$1,
+        SET balance = balance + $1, //balance + $1 is the new balance
         updated_at =NOW()
         WHERE id =$2
          `,
@@ -113,7 +113,7 @@ export async function decreaseAccountBalance(
         `
         UPDATE accounts
         SET
-            balance = balance - $1,
+            balance = balance - $1, //balance - $1 is the new balance
             updated_at = NOW()
         WHERE id = $2
         `,
@@ -140,7 +140,8 @@ export async function findAccountByIdForUpdate(
        FROM accounts
        WHERE id = $1
          AND ($2::uuid IS NULL OR user_id = $2)
-       FOR UPDATE`,
+       FOR UPDATE`, 
+       //FOR UPDATE is a PostgreSQL feature that locks the row for update.so other transactions cannot update this account until this transaction is committed.
       [accountId, userId ?? null]
     );
     if (result.rows.length === 0) {

@@ -164,7 +164,7 @@ export async function transferMoney(
       const accountIds = [fromAccountId, toAccountId].sort();
   
       const firstAccount = await findAccountByIdForUpdate(
-        accountIds[0],
+        accountIds[0], //accountIds[0] is the first account in the sorted array
         undefined,
         client
       );
@@ -180,6 +180,7 @@ export async function transferMoney(
       }
   
       // Recover the actual business roles after sorted locking
+      //Jo account originally fromAccountId tha, wahi sender hai. aur jo account originally toAccountId tha, wahi receiver hai.
       const sender =
         firstAccount.id === fromAccountId
           ? firstAccount
@@ -208,23 +209,23 @@ export async function transferMoney(
         throw new AppError(400, "Insufficient balance");
       }
   
-      // Create transfer transaction
+      // Create transfer transaction 
       const transaction = await createTransaction(
         "TRANSFER",
         amount,
         sender.currency,
         undefined,
-        client
+        client 
       );
   
-      // Debit sender
+      // Debit sender Ab sender se ₹500 minus
       await decreaseAccountBalance(
         sender.id,
         amount,
         client
       );
   
-      // Credit receiver
+      // Credit receiver Ab receiver se ₹500 add
       await increaseAccountBalance(
         receiver.id,
         amount,
@@ -258,3 +259,5 @@ export async function transferMoney(
       return transaction;
     });
   }
+  /*client yahan ek PostgreSQL connection hai, PoolClient. Commit aur rollback yeh khud nahi karta.
+   withTransaction usi connection pe BEGIN, COMMIT, aur ROLLBACK chalati hai.*/
