@@ -62,13 +62,29 @@ created_at: 2026-09-30T00:00:00.000Z
 export async function completeTransaction(
     transactionId: string,
     client: PoolClient
-): Promise<void> {
-    await client.query(
+): Promise<Transaction> {
+    const result = await client.query<Transaction>(
         `
         UPDATE transactions
         SET status = 'COMPLETED'
         WHERE id = $1
+        RETURNING
+            id,
+            type,
+            status,
+            amount,
+            currency,
+            reference,
+            created_at AS "createdAt"
         `,
         [transactionId]
     );
+
+    const transaction = result.rows[0];
+
+    if (!transaction) {
+        throw new Error("Transaction not found");
+    }
+
+    return transaction;
 }

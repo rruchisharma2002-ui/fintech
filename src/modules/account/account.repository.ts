@@ -95,10 +95,10 @@ export  async function increaseAccountBalance(
 ):Promise<void>{
     await client.query(
         `
-        UPDATE accounts 
-        SET balance = balance + $1, //balance + $1 is the new balance
-        updated_at =NOW()
-        WHERE id =$2
+        UPDATE accounts
+        SET balance = balance + $1,
+            updated_at = NOW()
+        WHERE id = $2
          `,
          [amount,accountId]
     );
@@ -113,7 +113,7 @@ export async function decreaseAccountBalance(
         `
         UPDATE accounts
         SET
-            balance = balance - $1, //balance - $1 is the new balance
+            balance = balance - $1,
             updated_at = NOW()
         WHERE id = $2
         `,

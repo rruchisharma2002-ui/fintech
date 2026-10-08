@@ -979,3 +979,16 @@ Aur ab woh fresh balance dekhegi.
           Locks 🔓
               ↓
           SUCCESS ✅
+ -----------------------------------------
+ Idempotency:
+ What you send	What you get
+Same key, same account, same toAccountId, same amount-
+The saved first response (PENDING)
+Same key, but a different account, toAccountId, or amount-
+Idempotency key already used for a different request
+A new Idempotency-Key-
+A new transfer, with status: "COMPLETED"
+
+The PENDING body comes back only when you repeat the first transfer exactly. Put the amount back to "1.00" and send it with the same Idempotency-Key, the same account in the URL, and the same toAccountId.
+201 — new transfer. Put a key you have never sent, for example transfer-test-002. The account, toAccountId, and amount can be anything valid. That runs a new transfer and returns "status": "COMPLETED"
+409 — different request. Keep the old key transfer-test-001, and change the account in the URL, toAccountId, or amount. Your "2.00" body is this case:
