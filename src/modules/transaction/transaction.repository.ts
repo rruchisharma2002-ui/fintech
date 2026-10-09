@@ -88,3 +88,56 @@ export async function completeTransaction(
 
     return transaction;
 }
+
+export async function findTransactionsByAccountId(
+    accountId: string,
+    limit: number,
+    offset: number
+): Promise<unknown[]> {
+    const result = await pool.query(
+        `
+        SELECT
+            t.id,
+            t.type,
+            t.status,
+            t.amount,
+            t.currency,
+            le.entry_type AS "entryType",
+            t.created_at AS "createdAt"
+        FROM transactions t
+        INNER JOIN ledger_entries le
+            ON le.transaction_id = t.id
+        WHERE le.account_id = $1
+        ORDER BY t.created_at DESC, t.id DESC
+        LIMIT $2
+        OFFSET $3
+        `,
+        [accountId, limit, offset]
+    );
+
+    return result.rows;
+}
+
+export async function hasMoreTransactions(
+    accountId: string,
+    offset: number,
+    limit: number
+): Promise<boolean> {
+    const result = await pool.query<{hasMore:boolean}>(
+        `
+ SELECT EXISTS (
+            SELECT 1
+            FROM transactions t
+            INNER JOIN ledger_entries le
+                ON le.transaction_id = t.id
+            WHERE le.account_id = $1
+            ORDER BY t.created_at DESC, t.id DESC
+            OFFSET $2
+            LIMIT 1
+        ) AS "hasMore"
+        `,
+        [accountId, offset + limit]
+    );
+
+    return result.rows[0].hasMore;
+}

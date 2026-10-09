@@ -3,7 +3,9 @@ import { createAccountController, getAccountsController, getAccountController, d
 import { authenticate } from "../user/user.middleware.js";
 import { validateBody } from "../user/user.validation.middleware.js";
 import { createAccountSchema, depositSchema, transferSchema, withdrawSchema } from "./account.validation.js";
-
+import {
+    getAccountTransactionHistoryController
+} from "./account.controller.js";
 const router = Router();
 
 router.post(
@@ -33,5 +35,9 @@ router.post(
     validateBody(transferSchema),
     transferController
   );        
-
+router.get(
+    "/:accountId/transactions",
+    authenticate,
+    getAccountTransactionHistoryController
+);
 export default router;

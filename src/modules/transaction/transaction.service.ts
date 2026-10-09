@@ -1,5 +1,9 @@
 import { createTransaction } from "./transaction.repository.js";
 import { Transaction } from "./transaction.types.js";
+import { findAccountById } from "../account/account.repository.js";
+import { findTransactionsByAccountId } from "./transaction.repository.js";
+import { AppError } from "../../shared/errors/app.error.js";
+import { hasMoreTransactions } from "./transaction.repository.js";
 
 export async function createPendingTransaction(
     type: Transaction["type"], //DEPOSIT, WITHDRAWAL, TRANSFER
@@ -22,3 +26,37 @@ createPendingTransaction(
     "INR",
     "Ruchi sent ₹1 to you"
 );*/
+
+export async function getAccountTransactionHistory(
+    accountId: string,
+    userId: string,
+    limit: number,
+    offset: number
+) {
+    const account = await findAccountById(accountId, userId);
+
+    if (!account) {
+        throw new AppError(404, "Account not found");
+    }
+
+    const transactions = await findTransactionsByAccountId(
+        accountId,
+        limit,
+        offset
+    );
+
+    const hasMore = await hasMoreTransactions(
+        accountId,
+        offset,
+        limit
+    );
+
+    return {
+        transactions,
+        pagination: {
+            limit,
+            offset,
+            hasMore,
+        },
+    };
+}

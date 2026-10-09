@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import { getAccountTransactionHistory } from "../transaction/transaction.service.js";
 import {
   createUserAccount,
   getUserAccounts,
@@ -7,6 +8,7 @@ import {
   withdrawMoney,
   transferMoney,
 } from "./account.service.js";
+
 export async function createAccountController(
   req: Request,
   res: Response,
@@ -169,14 +171,43 @@ export async function transferController(
       req.user.userId,
       req.body.toAccountId,
       req.body.amount,
-          idempotencyKey
-
+      idempotencyKey,
     );
 
     res.status(201).json({
       message: "Transfer successful",
       transaction,
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getAccountTransactionHistoryController(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        message: "Unauthorized",
+      });
+      return;
+    }
+
+    const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 100);
+
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const result = await getAccountTransactionHistory(
+      req.params.accountId as string,
+      req.user.userId,
+      limit,
+      offset,
+    );
+    res.status(200).json(
+      result,
+    );
   } catch (error) {
     next(error);
   }
