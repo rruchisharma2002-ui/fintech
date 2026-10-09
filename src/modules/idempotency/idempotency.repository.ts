@@ -1,7 +1,7 @@
 import { pool } from "../../config/database.js";
 import { IdempotencyKey } from "./idempotency.types.js";
 import { PoolClient } from "pg";
-
+//find the idempotency key in the database
 export async function findIdempotencyKey(
     userId: string,
     key: string,
@@ -61,6 +61,11 @@ export async function createIdempotencyKey(
 
     return result.rows[0] ?? null;
 }
+
+/*Nayi key hamesha PROCESSING status se shuru hoti hai, matlab "kaam chal raha hai".
+ON CONFLICT ... DO NOTHING: agar (user_id, key) already exist karti hai toh error mat phenko, chupchaap kuch mat karo.
+RETURNING: insert hua toh nayi row wapas milti hai. Conflict hua toh 0 rows milti hain, aur function null return karta hai.
+*/  
 export async function updateIdempotencyKey(
     id: string,
     status: "COMPLETED" | "FAILED",

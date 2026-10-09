@@ -4,7 +4,7 @@ Phase 1 mein user banta hai aur login karta hai. Paisa rakhne ki jagah abhi nahi
 
 User ko paise rakhne hain, isliye **account** chahiye. Account us user ki ek jeb hai: kis type ki hai, kis currency mein hai, aur uska number kya hai.
 
-Shuru mein account **khali jeb** thi: sirf jeb banana aur dekhna. Balance, **deposit**, **withdrawal**, aur **transfer** isi phase mein jud gaye. Deposit aur withdrawal ka short compare section 9 mein hai. Deposit ka detail section 10, withdrawal ka detail section 12, transfer ka detail section 13.
+Shuru mein account **khali jeb** thi: sirf jeb banana aur dekhna. Balance, **deposit**, **withdrawal**, aur **transfer** isi phase mein jud gaye. Deposit aur withdrawal ka short compare section 9 mein hai. Deposit ka detail section 10, withdrawal ka detail section 12, transfer ka detail section 13. Transfer pe idempotency section 14 mein.
 
 Flow wahi hai jo phase 1 mein tha:
 
@@ -492,7 +492,7 @@ Transfer mein do account hain, transaction ek. Sender pe **DEBIT** aur `balance 
 
 ## 9. Main — deposit aur withdrawal
 
-Dono complete hain. Route, Zod, controller, service, repository. Transfer bhi complete hai, detail section 13. Idempotency teeno pe nahi: same POST do baar bhejoge to paisa do baar judega, katega, ya transfer hoga.
+Dono complete hain. Route, Zod, controller, service, repository. Transfer bhi complete hai, detail section 13. Idempotency abhi sirf transfer pe hai (section 14). Deposit aur withdrawal pe nahi: same POST do baar bhejoge to paisa do baar judega ya katega.
 
 Dono ka shape ek jaisa hai. Farq sirf direction aur balance check ka hai.
 
@@ -624,7 +624,7 @@ Deposit aur withdrawal pe wahi nuksan: timeout ke baad retry, balance do baar ba
 
 **Idempotency** ka matlab: wahi request dubara aaye to effect ek baar ho. Doosri call naya paisa na jode. Pehli wali result wapas de, ya bata de ki yeh request pehle ho chuki hai.
 
-Abhi deposit, withdrawal, aur transfer pe yeh protection **nahi** hai. Har POST naya transaction, naya ledger entry, aur balance phir se badal deti hai. Same body do baar bhejogi to paisa do baar judega, katega, ya transfer hoga. Idempotency key (client ki ek unique id jo server pehli call yaad rakhe) baad ka kaam hai.
+Transfer pe yeh protection **lag chuki hai**, `Idempotency-Key` header se. Poora code aur flow section 14 mein hai. Deposit aur withdrawal pe abhi **nahi** hai: wahan har POST naya transaction, naya ledger entry banati hai aur balance phir se badal deti hai.
 
 ---
 
@@ -992,3 +992,202 @@ A new transfer, with status: "COMPLETED"
 The PENDING body comes back only when you repeat the first transfer exactly. Put the amount back to "1.00" and send it with the same Idempotency-Key, the same account in the URL, and the same toAccountId.
 201 — new transfer. Put a key you have never sent, for example transfer-test-002. The account, toAccountId, and amount can be anything valid. That runs a new transfer and returns "status": "COMPLETED"
 409 — different request. Keep the old key transfer-test-001, and change the account in the URL, toAccountId, or amount. Your "2.00" body is this case:
+
+---
+
+## 14. Idempotency — transfer pe kaise lagi (code ke saath)
+
+Section 11 mein problem thi: timeout ke baad client retry kare to paisa do baar kat jaata. Ab transfer pe iska solution laga hai.
+
+**Idempotent** = ek operation 1 baar chalao ya 10 baar, result same. Jaise lift ka button 5 baar dabao, lift ek hi baar aati hai.
+
+### Idea — `Idempotency-Key`
+
+Client har **naye** transfer ke liye ek unique key banata hai (jaise UUID `ABC123`) aur header mein bhejta hai. Retry pe **wahi key** dobara bhejta hai.
+
+Server ka rule:
+
+- Key pehli baar aayi → transfer karo, result save karo
+- Key pehle aa chuki → transfer **mat** karo, saved result wapas do
+
+### Files
+
+| File | Kya kiya |
+|---|---|
+| `migrations/009_create_idempotency_keys.sql` | nayi table `idempotency_keys` |
+| `idempotency/idempotency.types.ts` | `IdempotencyKey` type, status `PROCESSING / COMPLETED / FAILED` |
+| `idempotency/idempotency.utils.ts` | `generateRequestHash` — request ka SHA-256 |
+| `idempotency/idempotency.repository.ts` | find, create, update — SQL |
+| `idempotency/idempotency.service.ts` | `checkIdempotency` — naya hai ya retry |
+| `account/account.controller.ts` | header se key nikalna, nahi to **400** |
+| `account/account.service.ts` | `transferMoney` mein idempotency check + key `COMPLETED` |
+| `transaction/transaction.repository.ts` | `completeTransaction` ab `RETURNING` se poora transaction deta hai |
+| `account/account.repository.ts` | SQL ke andar `//` comment hataya — SQL mein comment `--` hota hai, `//` query tod deta |
+
+### Table — har column kyun
+
+| Column | Kya hai | Kyun chahiye |
+|---|---|---|
+| `id` | internal UUID | row baad mein update karne ke liye (`WHERE id = $3`) |
+| `user_id` | request kisne bheji | har user ka apna namespace. User A ki `ABC123` aur User B ki `ABC123` alag hain |
+| `key` | client ki key | isi se pata chalta hai retry hai ya naya |
+| `request_hash` | body ka SHA-256 (64 char) | same key, alag data → pakadna |
+| `status` | `PROCESSING` / `COMPLETED` / `FAILED` | request kis stage pe hai |
+| `response` | JSONB, original response | retry pe yahi wapas, transfer dobara nahi |
+| `created_at` | kab bani | baad mein purani keys cleanup ke liye |
+
+Sabse important line:
+
+```sql
+UNIQUE (user_id, key)
+```
+
+Ek user ki ek key ki **sirf ek row**. Yeh guarantee database deta hai, code nahi. Concurrency ka bachav isi pe hai.
+
+### `$1`, `$2`, `$3` — placeholders
+
+Query ke saath ek array jaata hai. `$1` = array ki pehli value, `$2` = doosri, `$3` = teesri. Counting **1 se**, array index **0 se**. Number array ki **position** batata hai, query mein kahan likha hai woh nahi.
+
+**① find**
+
+```ts
+`... WHERE user_id = $1 AND key = $2`, [userId, key]
+//                                      ↑$1     ↑$2
+```
+
+Matlab: is user ki, is key wali row dhoondo. `AS "userId"` se `snake_case` → `camelCase`, taaki TS type se match ho.
+
+**② create**
+
+```ts
+`INSERT INTO idempotency_keys (user_id, key, request_hash, status)
+ VALUES ($1, $2, $3, 'PROCESSING')
+ ON CONFLICT (user_id, key) DO NOTHING
+ RETURNING ...`, [userId, key, requestHash]
+```
+
+| Column | Value |
+|---|---|
+| `user_id` | `$1` → userId |
+| `key` | `$2` → key |
+| `request_hash` | `$3` → requestHash |
+| `status` | `'PROCESSING'` — fixed value, placeholder nahi |
+
+- `ON CONFLICT ... DO NOTHING` — key pehle se hai to error mat phenko, kuch mat karo.
+- `RETURNING` — insert hua to row milti hai. Conflict hua to **0 rows** → function `null` deta hai. Yahi `null` batata hai ki koi aur pehle aa gaya.
+
+**③ update**
+
+```ts
+`UPDATE idempotency_keys SET status = $1, response = $2 WHERE id = $3`,
+[status, JSON.stringify(response), id]
+```
+
+Matlab: is `id` wali row ko `COMPLETED` karo aur transfer ka result save karo. `JSON.stringify` isliye ki column `JSONB` hai.
+
+**`${key}` seedha kyun nahi likhte?** SQL Injection. Koi key mein `' OR '1'='1` bheje to query `WHERE key = '' OR '1'='1'` ban jaati — hamesha true, saari rows. `$1` se Postgres value ko sirf **data** maanta hai, SQL code nahi.
+
+### Request hash kyun
+
+```ts
+crypto.createHash("sha256").update(JSON.stringify(data)).digest("hex");
+```
+
+`{ fromAccountId, toAccountId, amount }` ka fingerprint. Client ne galti se same key `ABC123` pe pehle ₹500 aur phir ₹5000 bheja — bina hash ke server ₹500 wala purana response de deta. Hash alag → **409** "Idempotency key already used for a different request".
+
+### Flow
+
+```text
+Frontend
+   │  Header → Idempotency-Key: ABC123
+   ↓
+transferController     header nahi → 400
+   ↓
+transferMoney(..., "ABC123")
+   │  BEGIN
+   ↓
+checkIdempotency(userId, key, { from, to, amount })
+   │
+   ├── retry + COMPLETED   → saved response return (paisa nahi katega)
+   ├── retry + PROCESSING  → 409
+   ├── retry + FAILED      → 409
+   └── naya                → asli transfer (lock, check, debit, credit, ledger)
+                              → key COMPLETED + response save
+                              → COMMIT
+```
+
+### `checkIdempotency` andar
+
+```text
+Step 1: find
+        ├─ mili → hash alag?  → 409
+        │         hash same?  → { isRetry: true, record }
+        └─ nahi mili → Step 2
+
+Step 2: INSERT ... ON CONFLICT DO NOTHING
+        ├─ row mili → { isRetry: false, record }   ← naya, kaam karo
+        └─ null     → Step 3
+
+Step 3: Step 1 aur 2 ke beech kisi doosri request ne same key daal di.
+        Dobara find:
+        ├─ hash alag → 409
+        └─ hash same → { isRetry: true, record }
+```
+
+### Ek hi transaction — kyun zaroori
+
+`client` har function mein pass hota hai. Idempotency row aur paisa, dono **ek hi** `BEGIN ... COMMIT` mein:
+
+- Transfer fail (jaise insufficient balance) → `ROLLBACK` → key row bhi gayab. Client wahi key se dobara try kar sakta hai.
+- Transfer pass → `COMMIT` → paisa aur `COMPLETED` row saath save.
+
+Paisa kat gaya par key save nahi hui — yeh kabhi nahi ho sakta.
+
+### Concurrency — `ON CONFLICT` kaise bachata hai
+
+User ne double click kiya, do request **ek saath**, dono mein `ABC123`.
+
+Sirf "pehle check, phir insert" se nahi bachta:
+
+```text
+A: find → nahi mili
+B: find → nahi mili      ← dono ko lagta hai "main pehli hoon"
+A: INSERT ✅
+B: INSERT ✅ ???          ← double debit
+```
+
+`UNIQUE` + `ON CONFLICT DO NOTHING` ke saath asal mein:
+
+```text
+A: BEGIN → find (nahi) → INSERT 'PROCESSING' ✅ (commit nahi hua abhi)
+B: BEGIN → find (nahi, A ka data abhi dikhta nahi)
+B: INSERT ... ON CONFLICT → ⏳ Postgres B ko yahin rok deta hai,
+                              same unique key pe A ka insert pending hai
+A: transfer → COMPLETED + response → COMMIT
+B: ⏳ khulta hai → conflict → DO NOTHING → null
+B: Step 3 → find → A ki row, COMPLETED
+B: return record.response   ← paisa ek hi baar kata ✅
+```
+
+A ka `ROLLBACK` hua to B ka insert ho jaata hai aur B asli transfer karta hai. Yeh bhi sahi hai.
+
+`DO NOTHING` na hota to B ko unique violation error milta → **500**. `DO NOTHING` se B `null` leke Step 3 pe jaata hai.
+
+### `completeTransaction` kyun badla
+
+Pehle `void` deta tha. `response` mein save karne ke liye final object chahiye tha, isliye ab `RETURNING` se `COMPLETED` wala transaction deta hai. Pehle transfer, deposit, withdrawal ka response `PENDING` dikhata tha (create ke time ka object). Ab teeno `return await completeTransaction(...)` karte hain, status `COMPLETED` aata hai.
+
+### Pehle aur ab
+
+| Pehle | Ab |
+|---|---|
+| retry / double click → paisa 2 baar | same key → ek baar, retry pe same response |
+| header ki zarurat nahi | `Idempotency-Key` compulsory, nahi to **400** |
+| same key, alag amount → koi check nahi | **409** |
+| response mein `PENDING` | `COMPLETED` |
+
+### Dhyan rakhna
+
+1. Idempotency abhi **sirf transfer** pe hai. Deposit aur withdrawal pe double request abhi bhi possible.
+2. `PROCESSING` aur `FAILED` branch abhi practically nahi chalti. Sab ek transaction mein hai, to `PROCESSING` row commit se pehle kisi ko dikhti nahi (doosri request wait karti hai). `FAILED` kahin set nahi hota — fail pe row rollback ho jaati hai. Bug nahi, future ke liye hai (agar key alag transaction mein gayi).
+3. Retry pe bhi controller **201** "Transfer successful" bhejta hai. Sahi hai — client ko wahi milna chahiye jo pehli baar milta.

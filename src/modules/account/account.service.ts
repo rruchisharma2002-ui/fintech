@@ -141,6 +141,8 @@ export async function transferMoney(
       },
       client,
     );
+
+
     if (idempotency.isRetry) {
       const record = idempotency.record;
 
@@ -226,7 +228,13 @@ export async function transferMoney(
     await increaseAccountBalance(receiver.id, amount, client);
 
     // Sender ledger entry
-    await createLedgerEntry(transaction.id, sender.id, "DEBIT", amount, client);
+    await createLedgerEntry(
+      transaction.id,
+      sender.id,
+      "DEBIT",
+      amount,
+      client,
+    );
 
     // Receiver ledger entry
     await createLedgerEntry(
