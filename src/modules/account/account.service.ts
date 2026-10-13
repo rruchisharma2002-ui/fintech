@@ -5,6 +5,7 @@ import {
   decreaseAccountBalance,
 } from "./account.repository.js";
 import { Account } from "./account.types.js";
+
 import { withTransaction } from "../../config/database.js";
 import {
   createTransaction,
@@ -98,11 +99,11 @@ export async function withdrawMoney(
 
     // 2. Check account status
     if (account.status !== "ACTIVE") {
-      throw new AppError(400, "Account is not active");
+      throw new AppError(409, "Account is not active");
     }
 
     if (Number(account.balance) < Number(amount)) {
-      throw new AppError(400, "Insufficient balance");
+      throw new AppError(409, "Insufficient balance");
     }
     // 3. Create financial transaction
     const transaction = await createTransaction(
@@ -128,137 +129,175 @@ export async function transferMoney(
   userId: string,
   toAccountId: string,
   amount: string,
-  idempotencyKey: string,
+  idempotencyKey: string
 ) {
   return await withTransaction(async (client) => {
-    const idempotency = await checkIdempotency(
-      userId,
-      idempotencyKey,
-      {
-        fromAccountId,
-        toAccountId,
-        amount,
-      },
-      client,
-    );
 
+      // 1. Check idempotency
+      const idempotency = await checkIdempotency(
+          userId,
+          idempotencyKey,
+          {
+              fromAccountId,
+              toAccountId,
+              amount,
+          },
+          client
+      );
 
-    if (idempotency.isRetry) {
-      const record = idempotency.record;
+      // 2. Handle retries
+      if (idempotency.isRetry) {
+          const record = idempotency.record;
 
-      if (record.status === "COMPLETED") {
-        return record.response;
+          if (record.status === "COMPLETED") {
+              return record.response;
+          }
+
+          if (record.status === "PROCESSING") {
+              throw new AppError(
+                  409,
+                  "Request with this idempotency key is already being processed"
+              );
+          }
+
+          if (record.status === "FAILED") {
+              throw new AppError(
+                  409,
+                  "Previous request with this idempotency key failed"
+              );
+          }
       }
 
-      if (record.status === "PROCESSING") {
-        throw new AppError(
-          409,
-          "Request with this idempotency key is already being processed",
-        );
+      // 3. Prevent self-transfer
+      if (fromAccountId === toAccountId) {
+          throw new AppError(
+              400,
+              "Cannot transfer to the same account"
+          );
       }
 
-      if (record.status === "FAILED") {
-        throw new AppError(
-          409,
-          "Previous request with this idempotency key failed",
-        );
+      // 4. Sort account IDs to prevent deadlocks
+      const accountIds = [fromAccountId, toAccountId].sort();
+
+      // 5. Lock the first account
+      const firstAccount = await findAccountByIdForUpdate(
+          accountIds[0],
+          undefined,
+          client
+      );
+
+      // 6. Lock the second account
+      const secondAccount = await findAccountByIdForUpdate(
+          accountIds[1],
+          undefined,
+          client
+      );
+
+      // 7. Ensure both accounts exist
+      if (!firstAccount || !secondAccount) {
+          throw new AppError(404, "Account not found");
       }
-    }
 
-    // Prevent self-transfer
-    if (fromAccountId === toAccountId) {
-      throw new AppError(400, "Cannot transfer to the same account");
-    }
+      // 8. Recover sender and receiver roles
+      const sender =
+          firstAccount.id === fromAccountId
+              ? firstAccount
+              : secondAccount;
 
-    // Always lock accounts in the same order
-    const accountIds = [fromAccountId, toAccountId].sort();
+      const receiver =
+          firstAccount.id === toAccountId
+              ? firstAccount
+              : secondAccount;
 
-    const firstAccount = await findAccountByIdForUpdate(
-      accountIds[0], //accountIds[0] is the first account in the sorted array
-      undefined,
-      client,
-    );
+      // 9. Verify sender ownership
+      if (sender.userId !== userId) {
+          throw new AppError(404, "Account not found");
+      }
 
-    const secondAccount = await findAccountByIdForUpdate(
-      accountIds[1],
-      undefined,
-      client,
-    );
+      // 10. Verify both accounts are active
+      if (
+          sender.status !== "ACTIVE" ||
+          receiver.status !== "ACTIVE"
+      ) {
+          throw new AppError(
+              409,
+              "Both accounts must be active"
+          );
+      }
 
-    if (!firstAccount || !secondAccount) {
-      throw new AppError(404, "Account not found");
-    }
+      // 11. Verify currency compatibility
+      if (sender.currency !== receiver.currency) {
+          throw new AppError(
+              409,
+              "Account currencies do not match"
+          );
+      }
 
-    // Recover the actual business roles after sorted locking
-    //Jo account originally fromAccountId tha, wahi sender hai. aur jo account originally toAccountId tha, wahi receiver hai.
-    const sender =
-      firstAccount.id === fromAccountId ? firstAccount : secondAccount;
+      // 12. Verify sufficient balance
+      if (Number(sender.balance) < Number(amount)) {
+          throw new AppError(
+              409,
+              "Insufficient balance"
+          );
+      }
 
-    const receiver =
-      firstAccount.id === toAccountId ? firstAccount : secondAccount;
+      // 13. Create the transfer transaction
+      const transaction = await createTransaction(
+          "TRANSFER",
+          amount,
+          sender.currency,
+          undefined,
+          client
+      );
 
-    // Sender must belong to logged-in user
-    if (sender.userId !== userId) {
-      throw new AppError(403, "Unauthorized");
-    }
+      // 14. Debit sender
+      await decreaseAccountBalance(
+          sender.id,
+          amount,
+          client
+      );
 
-    // Both accounts must be active
-    if (sender.status !== "ACTIVE" || receiver.status !== "ACTIVE") {
-      throw new AppError(400, "Both accounts must be active");
-    }
+      // 15. Credit receiver
+      await increaseAccountBalance(
+          receiver.id,
+          amount,
+          client
+      );
 
-    // Sender must have enough money
-    if (Number(sender.balance) < Number(amount)) {
-      throw new AppError(400, "Insufficient balance");
-    }
+      // 16. Create sender's DEBIT ledger entry
+      await createLedgerEntry(
+          transaction.id,
+          sender.id,
+          "DEBIT",
+          amount,
+          client
+      );
 
-    // Create transfer transaction
-    const transaction = await createTransaction(
-      "TRANSFER",
-      amount,
-      sender.currency,
-      undefined,
-      client,
-    );
+      // 17. Create receiver's CREDIT ledger entry
+      await createLedgerEntry(
+          transaction.id,
+          receiver.id,
+          "CREDIT",
+          amount,
+          client
+      );
 
-    // Debit sender Ab sender se ₹500 minus
-    await decreaseAccountBalance(sender.id, amount, client);
+      // 18. Mark the transaction as completed
+      const completedTransaction = await completeTransaction(
+          transaction.id,
+          client
+      );
 
-    // Credit receiver Ab receiver se ₹500 add
-    await increaseAccountBalance(receiver.id, amount, client);
+      // 19. Save the successful idempotency response
+      await updateIdempotencyKey(
+          idempotency.record.id,
+          "COMPLETED",
+          completedTransaction,
+          client
+      );
 
-    // Sender ledger entry
-    await createLedgerEntry(
-      transaction.id,
-      sender.id,
-      "DEBIT",
-      amount,
-      client,
-    );
-
-    // Receiver ledger entry
-    await createLedgerEntry(
-      transaction.id,
-      receiver.id,
-      "CREDIT",
-      amount,
-      client,
-    );
-
-    // Mark transaction completed
-    const completedTransaction = await completeTransaction(
-      transaction.id,
-      client,
-    );
-
-    await updateIdempotencyKey(
-      idempotency.record.id,
-      "COMPLETED",
-      completedTransaction,
-      client,
-    );
-
-    return completedTransaction;
+      // 20. Return the completed transaction
+      return completedTransaction;
   });
 }
 /*client yahan ek PostgreSQL connection hai, PoolClient. Commit aur rollback yeh khud nahi karta.
