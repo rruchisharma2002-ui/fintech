@@ -1,14 +1,18 @@
 import { PoolClient } from "pg";
 import { pool } from "../../config/database.js";
-import { Account } from "./account.types.js";
+import { Account, AccountType } from "./account.types.js";
+import { AppError } from "../../shared/errors/app.error.js";
 // [post]create account for a user by userID
 export async function createAccount(
-    userId: string,
-    type: Account["type"],
-    currency: string  //user sends this from the frontend
+  userId: string,
+  type: AccountType,
+  currency: string,
+  client?: PoolClient,
 ): Promise<Account> {
-    const result = await pool.query<Account>(
-        `
+  const db = client ?? pool;
+
+  const result = await db.query<Account>(
+    `
         INSERT INTO accounts (
             user_id,
             type,
@@ -26,17 +30,15 @@ export async function createAccount(
             created_at AS "createdAt",
             updated_at AS "updatedAt"
         `,
-        [userId, type, currency]
-    );
+    [userId, type, currency],
+  );
 
-    return result.rows[0];
+  return result.rows[0];
 }
 // [get] give user by userID
-export async function findAccountsByUserId(
-    userId: string
-): Promise<Account[]> {
-    const result = await pool.query<Account>(
-        `
+export async function findAccountsByUserId(userId: string): Promise<Account[]> {
+  const result = await pool.query<Account>(
+    `
         SELECT
             id,
             user_id AS "userId",
@@ -51,19 +53,19 @@ export async function findAccountsByUserId(
         WHERE user_id = $1
         ORDER BY created_at DESC
         `,
-        [userId]
-    );
+    [userId],
+  );
 
-    return result.rows;
+  return result.rows;
 }
 
 // [get] give account by accountID and userID
 export async function findAccountById(
-    accountId: string,
-    userId: string
+  accountId: string,
+  userId: string,
 ): Promise<Account | null> {
-    const result = await pool.query<Account>(
-        `
+  const result = await pool.query<Account>(
+    `
         SELECT
             id,
             user_id AS "userId",
@@ -78,56 +80,61 @@ export async function findAccountById(
         WHERE id = $1
           AND user_id = $2
         `,
-        [accountId, userId]
-    );
+    [accountId, userId],
+  );
 
-    if (result.rows.length === 0) {
-        return null;
-    }
+  if (result.rows.length === 0) {
+    return null;
+  }
 
-    return result.rows[0];
+  return result.rows[0];
 }
 // to update balance
-export  async function increaseAccountBalance(
-     accountId:string,
-     amount:string,
-     client:PoolClient
-):Promise<void>{
-    await client.query(
-        `
+export async function increaseAccountBalance(
+  accountId: string,
+  amount: string,
+  client: PoolClient,
+): Promise<void> {
+  await client.query(
+    `
         UPDATE accounts
         SET balance = balance + $1,
             updated_at = NOW()
         WHERE id = $2
          `,
-         [amount,accountId]
-    );
+    [amount, accountId],
+  );
 }
 
 export async function decreaseAccountBalance(
-    accountId: string,
-    amount: string,
-    client: PoolClient
+  accountId: string,
+  amount: string,
+  client: PoolClient,
 ): Promise<void> {
-    await client.query(
-        `
+  const result = await client.query(
+    `
         UPDATE accounts
         SET
-            balance = balance - $1,
+            balance = balance - $1::numeric,
             updated_at = NOW()
         WHERE id = $2
+          AND balance >= $1::numeric
+        RETURNING id
         `,
-        [amount, accountId]
-    );
+    [amount, accountId],
+  );
+  if (result.rowCount !== 1) {
+    throw new AppError(409, "Insufficient balance or account not found");
+  }
 }
 
 export async function findAccountByIdForUpdate(
-    accountId: string,
-    userId: string | undefined,
-    client: PoolClient
-  ): Promise<Account | null> {
-    const result = await client.query(
-      `SELECT
+  accountId: string,
+  userId: string | undefined,
+  client: PoolClient,
+): Promise<Account | null> {
+  const result = await client.query(
+    `SELECT
          id,
          user_id AS "userId",
          account_number AS "accountNumber",
@@ -140,13 +147,13 @@ export async function findAccountByIdForUpdate(
        FROM accounts
        WHERE id = $1
          AND ($2::uuid IS NULL OR user_id = $2)
-       FOR UPDATE`, 
-       //FOR UPDATE is a PostgreSQL feature that locks the row for update.so other transactions cannot update this account until this transaction is committed.
-      [accountId, userId ?? null]
-    );
-    if (result.rows.length === 0) {
-        return null;
-    }
+       FOR UPDATE`,
+    //FOR UPDATE is a PostgreSQL feature that locks the row for update.so other transactions cannot update this account until this transaction is committed.
+    [accountId, userId ?? null],
+  );
+  if (result.rows.length === 0) {
+    return null;
+  }
 
-    return result.rows[0] ?? null;
+  return result.rows[0] ?? null;
 }
