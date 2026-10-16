@@ -136,9 +136,9 @@ export async function withdrawMoney(
       throw new AppError(409, "Account is not active");
     }
 
-    if (Number(account.balance) < Number(amount)) {
-      throw new AppError(409, "Insufficient balance");
-    }
+    // if (Number(account.balance) < Number(amount)) {
+    //   throw new AppError(409, "Insufficient balance");
+    // }
     // 3. Create financial transaction
     const transaction = await createTransaction(
       "WITHDRAWAL",
@@ -274,9 +274,9 @@ export async function transferMoney(
       }
 
       // 12. Verify sufficient balance
-      if (Number(sender.balance) < Number(amount)) {
-        throw new AppError(409, "Insufficient balance");
-      }
+      // if (Number(sender.balance) < Number(amount)) {
+      //   throw new AppError(409, "Insufficient balance");
+      // }
 
       // 13. Create the transfer transaction
       const transaction = await createTransaction(

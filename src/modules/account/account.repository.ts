@@ -106,25 +106,30 @@ export async function increaseAccountBalance(
   );
 }
 
+
 export async function decreaseAccountBalance(
   accountId: string,
   amount: string,
-  client: PoolClient,
+  client: PoolClient
 ): Promise<void> {
   const result = await client.query(
-    `
-        UPDATE accounts
-        SET
-            balance = balance - $1::numeric,
-            updated_at = NOW()
-        WHERE id = $2
-          AND balance >= $1::numeric
-        RETURNING id
-        `,
-    [amount, accountId],
+      `
+      UPDATE accounts
+      SET
+          balance = balance - $1::numeric,
+          updated_at = NOW()
+      WHERE id = $2
+        AND balance >= $1::numeric
+      RETURNING id
+      `,
+      [amount, accountId]
   );
+
   if (result.rowCount !== 1) {
-    throw new AppError(409, "Insufficient balance or account not found");
+      throw new AppError(
+          409,
+          "Insufficient balance or account not found"
+      );
   }
 }
 
