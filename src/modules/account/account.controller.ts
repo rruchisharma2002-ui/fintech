@@ -212,3 +212,5 @@ export async function getAccountTransactionHistoryController(
     next(error);
   }
 }
+
+export const getAccountTransactionController = getAccountTransactionHistoryController;
