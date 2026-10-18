@@ -2,13 +2,15 @@ import { z } from "zod";
 
 
 
+
 const amountSchema = z
     .string()
     .trim()
     .regex(
-        /^(?=.*[1-9])\d+(\.\d{1,2})?$/,
+       /^(?=.*[1-9])\d+(\.\d{1,2})?$/,
         "Amount must be greater than zero and have at most two decimal places"
     );
+
 
 export const createAccountSchema = z.object({
     type: z.enum(["SAVINGS", "CHECKING"]),

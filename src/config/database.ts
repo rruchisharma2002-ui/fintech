@@ -1,4 +1,4 @@
-import { Pool,PoolClient } from "pg";
+import { Pool, PoolClient } from "pg";
 import { env } from "./env.js";
 //group of connections to the database which are managed by the pool
 export const pool = new Pool({
@@ -13,19 +13,28 @@ export async function withTransaction<T>(
     callback: (client: PoolClient) => Promise<T>, //callback is a function that takes a client and returns a promise of type T
 ): Promise<T> { //returns a promise of type T
     const client = await pool.connect(); //connect to the database
+    let transactionStarted = false;
 
     try {
         await client.query("BEGIN"); //begin a transaction
+        transactionStarted = true;
 
         const result = await callback(client);
 
         await client.query("COMMIT"); //commit the transaction
+        transactionStarted = false;
 
         return result;
     } catch (error) {
-        await client.query("ROLLBACK"); //rollback the transaction
+        if (transactionStarted) {
+            try {
+                await client.query("ROLLBACK"); //rollback the transaction
+            } catch (rollbackError) {
+                console.error("Failed to rollback transaction:", rollbackError);
+            }
+        }
         throw error;
     } finally {
         client.release(); //release the client
     }
-}
+} 
