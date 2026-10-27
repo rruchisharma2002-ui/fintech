@@ -22,4 +22,9 @@ export const env = {
     jwt: {
         secret: getEnv("JWT_SECRET"),
     },
+
+    razorpay: {
+        keyId: getEnv("RAZORPAY_KEY_ID"),
+        keySecret: getEnv("RAZORPAY_KEY_SECRET"),
+    },
 };

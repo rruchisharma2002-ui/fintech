@@ -28,6 +28,7 @@
     "jsonwebtoken": "^9.0.3",
     "node-pg-migrate": "^9.0.0",
     "pg": "^8.23.0",
+    "razorpay": "^2.9.8",
     "zod": "^4.6.5"
   }
 }
